@@ -1,0 +1,77 @@
+TourWise: Ground Transport GDS Integration
+
+Overview
+
+This document outlines the major functional update to the TourWise application. We are transitioning the platform's backend logic from a simple "tour marketplace" to a robust Ground Transport Management System (effectively a GDS for buses and vans).
+
+This update empowers Travel Agents to manage physical assets (fleets), schedule vehicles, and offer precise seat inventory to Travelers, mirroring the functionality of major transport networks like Busbud or RedBus, but tailored for private tour operators.
+
+Key Features & Changes
+
+1. Fleet Inventory Management
+
+Purpose: Allows agents to digitize their physical assets.
+
+New Page: My Fleet
+
+Agents can add vehicles to their profile.
+
+Data Points: Vehicle Image, ID (e.g., VAN-04), Type (Coaster, Grand Cabin, Jeep), Status (Available/Maintenance), and Amenities (AC, WiFi).
+
+Goal: Moves away from generic "10 seats available" to specific "Toyota Coaster #4 is available".
+
+2. Transport Scheduler ("The Grid")
+
+Purpose: Availability management and conflict prevention.
+
+New Page: Scheduler
+
+Visuals: A Gantt-chart or Calendar view.
+
+Axes: Vehicles (Y-Axis) vs. Dates (X-Axis).
+
+Functionality: Agents can visually see gaps in their schedule or overlapping bookings, preventing double-booking of vehicles.
+
+3. Integrated Trip Creation
+
+Purpose: Linking the tour package to the physical vehicle.
+
+Workflow Update:
+
+In the "Create Trip" flow, the "Transportation" section is no longer just text.
+
+Action: Agents click "Check Fleet Availability" for their trip dates.
+
+Result: They select a specific vehicle from their available fleet to assign to that trip.
+
+4. Visual Seat Selection (Traveler Experience)
+
+Purpose: Enhancing user trust and booking precision.
+
+Workflow Update:
+
+The generic "Number of Seats" counter is replaced/augmented by a Visual Seat Map.
+
+Logic: The seat map dynamically renders based on the vehicle type assigned (e.g., a 20-seat layout for a Coaster vs. a 12-seat layout for a HiAce).
+
+Interaction: Travelers can pick specific seats (Window/Aisle), similar to cinema or airline bookings.
+
+Rationale for Change
+
+The initial prototype treated trips as abstract "products." However, for TourWise's target market (bus and van operators), the constraint is often the vehicle, not just the destination.
+
+By integrating this "Ground Transport GDS" logic, we solve real-world logistical problems:
+
+Overbooking: Preventing selling 15 tickets for a 12-seater van.
+
+Asset Utilization: Helping agents keep their vans busy and profitable.
+
+Customer Experience: Allowing users to choose their preferred comfort level (seat selection).
+
+Implementation Prompt Summary
+
+Agent Side: Create Fleet Inventory and Scheduler pages; update Add Trip form to include vehicle assignment.
+
+Traveler Side: Update Booking Page to implement interactive Seat Maps.
+
+Design System: Maintain Glassmorphism; use "Industrial/Logistics" layout cues for the agent dashboard.

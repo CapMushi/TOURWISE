@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Page backgrounds */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    /* Glass panel backgrounds */
+    --glass: 0 0% 100%;
+    --glass-border: 0 0% 100%;
+    
+    /* Card backgrounds */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary: Deep Indigo */
+    --primary: 239 84% 60%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 239 84% 67%;
+    --primary-active: 239 84% 53%;
+
+    /* Secondary: Vibrant Magenta */
+    --secondary: 294 72% 59%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-hover: 294 72% 66%;
+    --secondary-active: 294 72% 52%;
+
+    /* Accent: Bright Teal */
+    --accent: 173 80% 40%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Muted neutrals */
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    /* Text colors */
+    --heading: 222 47% 11%;
+    --body-text: 215 16% 47%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 239 84% 60%;
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 239 84% 60%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 239 84% 60%;
+    --sidebar-accent: 239 84% 67%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 239 84% 67%;
+    --sidebar-ring: 173 80% 40%;
+
+    /* Glassmorphism effects */
+    --glass-opacity: 0.2;
+    --glass-blur: 16px;
+    --glass-border-opacity: 0.3;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-body-text font-sans antialiased;
+    background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(210 40% 96%) 100%);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-heading font-heading;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    background: hsla(var(--glass), var(--glass-opacity));
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsla(var(--glass-border), var(--glass-border-opacity));
+    @apply rounded-xl shadow-lg;
+  }
+
+  .glass-card {
+    @apply glass-panel transition-all duration-300;
+  }
+
+  .glass-card:hover {
+    @apply scale-[1.02] shadow-xl;
+    border-color: hsla(var(--glass-border), 0.5);
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent;
+  }
+}
