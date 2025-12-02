@@ -1,0 +1,33 @@
+---
+name: "Auth Phase – Supabase Email + Google"
+description: "Limit changes to auth integration: Supabase client, frontend auth context, login flow, backend JWT middleware, and /api/me."
+when:
+  - always: true
+targets:
+  - type: workspace
+    pattern: "**"
+---
+
+## Scope
+
+- **Do**:
+  - Work on Supabase auth integration only (email/password + Google).
+  - Use existing files and modules:
+    - Frontend: `src/lib/supabaseClient.ts`, `src/contexts/AuthContext.tsx`, `src/pages/Login.tsx`, `src/components/auth/ProtectedRoute.tsx`, `src/App.tsx`.
+    - Backend: `app/core/config.py`, `app/core/security.py`, `app/api/auth.py`, `app/main.py`.
+  - Keep other functionality unchanged unless strictly required for auth.
+- **Do NOT**:
+  - Add new business features (trips, bookings, moderation, etc.).
+  - Refactor unrelated UI or backend logic.
+
+## Environment
+
+- Frontend expects:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
+- Backend expects:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `SUPABASE_JWT_SECRET`
+

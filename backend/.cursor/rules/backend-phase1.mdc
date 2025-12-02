@@ -1,0 +1,45 @@
+---
+name: "Backend Phase 1 – FastAPI + Supabase"
+description: "Limit work to backend Phase 1: FastAPI skeleton, config, Supabase client, and health endpoint."
+when:
+  - always: true
+---
+
+## Scope
+
+- **Do**:
+  - Work only in the `backend/` folder.
+  - Set up a minimal **FastAPI** app and project structure.
+  - Configure environment variables and settings.
+  - Wire a Supabase client (no domain logic).
+  - Expose a simple `GET /health` endpoint.
+- **Do NOT**:
+  - Change `frontend/` code except for minimal env documentation if strictly required.
+  - Implement auth, profiles, trips, bookings, or other business routes.
+
+## Tech stack
+
+- **Language**: Python 3.x.
+- **Framework**: FastAPI with Uvicorn for local dev.
+- **Dependencies (Phase 1 only)**: `fastapi`, `uvicorn[standard]`, env/config library (`pydantic-settings` or `python-dotenv`), Supabase client.
+- Use `backend/requirements.txt` or `backend/pyproject.toml` for backend dependencies only.
+
+## Structure & config
+
+- Recommended layout:
+  - `backend/app/main.py` – FastAPI entrypoint.
+  - `backend/app/api/health.py` – health router.
+  - `backend/app/core/config.py` – env/settings.
+  - `backend/.env.example` – required env vars.
+- Env vars to support in Phase 1:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY` (backend only)
+  - `BACKEND_PORT` (optional, with default).
+
+## Supabase & APIs
+
+- Create a reusable Supabase client module (e.g. `backend/app/services/supabase_client.py`) using env settings.
+- Do **not** implement auth, profiles, trips, bookings, or other business routes yet.
+- Only required API route in Phase 1: `GET /health` returning a simple JSON status (and optional version/uptime).
+

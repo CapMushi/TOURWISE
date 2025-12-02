@@ -1,34 +1,71 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plane, Shield } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+
   const [isSignup, setIsSignup] = useState(false);
   const [isAdminView, setIsAdminView] = useState(false);
   const [role, setRole] = useState<"traveler" | "agent">("traveler");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    setError(null);
+
     if (isAdminView) {
-      // Admin login
+      // TODO: wire real admin auth later
       navigate("/admin");
-    } else if (isSignup) {
-      // Redirect to role selection after signup
-      navigate("/role-selection");
-    } else {
-      // Handle login - redirect based on role
-      if (role === "agent") {
-        navigate("/agent");
-      } else {
-        navigate("/");
-      }
+      return;
     }
+
+    setSubmitting(true);
+
+    try {
+      if (isSignup) {
+        const { error: signupError } = await signUpWithEmail(email, password);
+        if (signupError) {
+          setError(signupError);
+          return;
+        }
+        // After signup, go to role selection to finish onboarding
+        navigate("/role-selection");
+      } else {
+        const { error: loginError } = await signInWithEmail(email, password);
+        if (loginError) {
+          setError(loginError);
+          return;
+        }
+
+        // Redirect to previous location if available, otherwise based on role selection
+        const state = location.state as { from?: Location } | undefined;
+        if (state?.from) {
+          navigate(state.from.pathname, { replace: true });
+        } else if (role === "agent") {
+          navigate("/agent");
+        } else {
+          navigate("/");
+        }
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    await signInWithGoogle();
   };
 
   return (
@@ -61,12 +98,26 @@ export default function Login() {
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="you@example.com" required />
+            <Input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" placeholder="••••••••" required />
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
           </div>
 
           {!isSignup && !isAdminView && (
@@ -84,9 +135,32 @@ export default function Login() {
             </div>
           )}
 
-          <Button type="submit" className="w-full">
-            {isAdminView ? "Admin Login" : isSignup ? "Sign Up" : "Login"}
+          {error && (
+            <p className="text-sm text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+
+          <Button type="submit" className="w-full" disabled={submitting}>
+            {submitting
+              ? "Please wait..."
+              : isAdminView
+                ? "Admin Login"
+                : isSignup
+                  ? "Sign Up"
+                  : "Login"}
           </Button>
+
+          {!isAdminView && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleGoogleSignIn}
+            >
+              Continue with Google
+            </Button>
+          )}
 
           {!isAdminView && (
             <div className="text-center text-sm space-y-2">

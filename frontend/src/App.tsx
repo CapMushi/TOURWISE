@@ -31,6 +31,8 @@ import ModerationQueue from "./pages/ModerationQueue";
 import AdminSettings from "./pages/AdminSettings";
 import ResourceInventory from "./pages/ResourceInventory";
 import NotFound from "./pages/NotFound";
+import { AuthProvider } from "./contexts/AuthContext";
+import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -39,41 +41,268 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/role-selection" element={<RoleSelection />} />
-          <Route path="/questionnaire" element={<TravelerQuestionnaire />} />
-          <Route path="/agent-verification" element={<AgentVerification />} />
-          <Route path="/" element={<AppLayout userRole="traveler"><TravelerHome /></AppLayout>} />
-          <Route path="/my-trips" element={<AppLayout userRole="traveler"><MyTrips /></AppLayout>} />
-          <Route path="/profile" element={<AppLayout userRole="traveler"><Profile /></AppLayout>} />
-          <Route path="/update-preferences" element={<AppLayout userRole="traveler"><UpdatePreferences /></AppLayout>} />
-          <Route path="/trip/:tripId" element={<AppLayout userRole="traveler"><TripDetails /></AppLayout>} />
-          <Route path="/booking/:tripId" element={<AppLayout userRole="traveler"><Booking /></AppLayout>} />
-          <Route path="/search" element={<AppLayout userRole="traveler"><div className="p-8">Search Results (Coming Soon)</div></AppLayout>} />
-          <Route path="/agent" element={<AppLayout userRole="agent"><AgentDashboard /></AppLayout>} />
-          <Route path="/agent/notifications" element={<AppLayout userRole="agent"><AgentNotifications /></AppLayout>} />
-          <Route path="/agent/manage-trips" element={<AppLayout userRole="agent"><ManageTrips /></AppLayout>} />
-          <Route path="/agent/add-trip" element={<AppLayout userRole="agent"><AddTrip /></AppLayout>} />
-          <Route path="/agent/manage-details/:id" element={<AppLayout userRole="agent"><ManageDetails /></AppLayout>} />
-          <Route path="/agent/resource-inventory" element={<AppLayout userRole="agent"><ResourceInventory /></AppLayout>} />
-          <Route path="/agent/collaboration" element={<AppLayout userRole="agent"><div className="p-8">Collaboration Hub (Coming Soon)</div></AppLayout>} />
-          <Route path="/agent/profile" element={<AppLayout userRole="agent"><div className="p-8">Profile (Coming Soon)</div></AppLayout>} />
-          <Route path="/admin" element={<AppLayout userRole="admin"><AdminDashboard /></AppLayout>} />
-          <Route path="/admin/trip-approvals" element={<AppLayout userRole="admin"><TripApprovals /></AppLayout>} />
-          <Route path="/admin/trip-review/:tripId" element={<AppLayout userRole="admin"><AdminTripView /></AppLayout>} />
-          <Route path="/admin/manage-users" element={<AppLayout userRole="admin"><ManageUsers /></AppLayout>} />
-          <Route path="/admin/manage-agents" element={<AppLayout userRole="admin"><ManageAgents /></AppLayout>} />
-          <Route path="/admin/manage-travelers" element={<AppLayout userRole="admin"><ManageTravelers /></AppLayout>} />
-          <Route path="/admin/traveler-profile/:id" element={<AppLayout userRole="admin"><TravelerProfileDetail /></AppLayout>} />
-          <Route path="/admin/agent-profile/:id" element={<AppLayout userRole="admin"><AgentProfileDetail /></AppLayout>} />
-          <Route path="/admin/moderation" element={<AppLayout userRole="admin"><ModerationQueue /></AppLayout>} />
-          <Route path="/admin/settings" element={<AppLayout userRole="admin"><AdminSettings /></AppLayout>} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/role-selection" element={<RoleSelection />} />
+            <Route path="/questionnaire" element={<TravelerQuestionnaire />} />
+            <Route path="/agent-verification" element={<AgentVerification />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <TravelerHome />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/my-trips"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <MyTrips />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <Profile />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/update-preferences"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <UpdatePreferences />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/trip/:tripId"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <TripDetails />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/booking/:tripId"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <Booking />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <div className="p-8">Search Results (Coming Soon)</div>
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <AgentDashboard />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/notifications"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <AgentNotifications />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/manage-trips"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <ManageTrips />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/add-trip"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <AddTrip />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/manage-details/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <ManageDetails />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/resource-inventory"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <ResourceInventory />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/collaboration"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <div className="p-8">Collaboration Hub (Coming Soon)</div>
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/profile"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <div className="p-8">Profile (Coming Soon)</div>
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <AdminDashboard />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/trip-approvals"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <TripApprovals />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/trip-review/:tripId"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <AdminTripView />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/manage-users"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <ManageUsers />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/manage-agents"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <ManageAgents />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/manage-travelers"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <ManageTravelers />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/traveler-profile/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <TravelerProfileDetail />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/agent-profile/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <AgentProfileDetail />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/moderation"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <ModerationQueue />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/settings"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="admin">
+                    <AdminSettings />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
