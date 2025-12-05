@@ -1,0 +1,241 @@
+---
+name: "Database Schema – Supabase Tables and Relationships"
+description: "Complete database schema documentation for TourWise platform. Use this as reference when working with database operations, API endpoints, and data models."
+when:
+  - always: true
+targets:
+  - type: workspace
+    pattern: "**"
+---
+
+## Database: Supabase PostgreSQL
+
+### Overview
+
+The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
+- `profiles` - Core user profile data
+- `travel_agent` - Agent-specific information
+- `itinerary` - User travel itineraries
+- `booking` - Service bookings
+- `service_listing` - Services offered by agents
+- `recommendation` - User reviews/recommendations
+
+---
+
+## Table: `profiles`
+
+**Purpose:** Core user profile information linked to Supabase Auth.
+
+**Columns:**
+- `id` (uuid, PRIMARY KEY) - Links directly to `auth.users.id` (Supabase Auth)
+- `username` (text) - User's display name
+- `preferences` (jsonb) - User-specific settings/preferences (flexible JSON)
+- `profile_details` (jsonb) - Additional profile data (flexible JSON)
+- `updated_at` (timestamptz) - Last update timestamp
+
+**Relationships:**
+- Referenced by `user_id` in: `itinerary`, `booking`, `travel_agent`, `recommendation`
+- One-to-one with `auth.users` (via `id`)
+
+**Key Notes:**
+- `id` column is the primary key and matches `auth.users.id`
+- Use `id` (not `user_id`) when querying profiles table
+- `preferences` and `profile_details` are jsonb fields for flexible data storage
+- When creating profiles, use `id` from JWT token's `sub` claim
+
+---
+
+## Table: `travel_agent`
+
+**Purpose:** Stores information for users registered as travel agents.
+
+**Columns:**
+- `agent_id` (int8, PRIMARY KEY) - Auto-incrementing agent identifier
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
+- `name` (text) - Agent's business/display name
+- `email` (text) - Agent's contact email
+- `verification_status` (verification_status_enum) - Agent verification status (e.g., 'pending', 'verified', 'rejected')
+- `contact_info` (jsonb) - Agent contact details (phone, address, etc.)
+- `profile_details` (jsonb) - Additional agent-specific profile data
+- `created_at` (timestamptz) - Account creation timestamp
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- Referenced by `agent_id` in: `service_listing`
+
+**Key Notes:**
+- Presence in this table determines if user has "agent" role
+- To check if user is agent: query `travel_agent` table where `user_id = profiles.id`
+- Default `verification_status` is typically 'pending' for new agents
+
+---
+
+## Table: `itinerary`
+
+**Purpose:** Stores travel itineraries created by users.
+
+**Columns:**
+- `itinerary_id` (int8, PRIMARY KEY) - Auto-incrementing itinerary identifier
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
+- `name` (text) - Itinerary name/title
+- `start_date` (date) - Trip start date
+- `end_date` (date) - Trip end date
+- `status` (itinerary_status_enum) - Status enum (e.g., 'planned', 'active', 'completed', 'cancelled')
+- `created_at` (timestamptz) - Creation timestamp
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- Referenced by `itinerary_id` in: `booking`
+
+**Key Notes:**
+- Users can have multiple itineraries
+- Itineraries can contain multiple bookings
+
+---
+
+## Table: `service_listing`
+
+**Purpose:** Services offered by travel agents (transport, accommodation, tours, etc.).
+
+**Columns:**
+- `listing_id` (int8, PRIMARY KEY) - Auto-incrementing listing identifier
+- `agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id`
+- `type` (service_type_enum) - Service category enum (e.g., 'flight', 'hotel', 'car_rental', 'tour', 'transport')
+- `details` (jsonb) - Service-specific details (flexible JSON structure)
+- `price` (numeric) - Service price
+- `availability` (bool) - Whether service is currently available
+- `created_at` (timestamptz) - Listing creation timestamp
+
+**Relationships:**
+- `agent_id` → `travel_agent.agent_id` (many-to-one)
+- Referenced by `listing_id` in: `booking`, `recommendation`
+
+**Key Notes:**
+- Each listing belongs to one agent
+- `details` jsonb field allows flexible service-specific data
+- `type` enum categorizes the service
+
+---
+
+## Table: `booking`
+
+**Purpose:** Records bookings made by users for services.
+
+**Columns:**
+- `booking_id` (int8, PRIMARY KEY) - Auto-incrementing booking identifier
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
+- `listing_id` (int8, FOREIGN KEY) - References `service_listing.listing_id`
+- `itinerary_id` (int8, FOREIGN KEY) - References `itinerary.itinerary_id`
+- `booking_date` (timestamptz) - When booking was made
+- `status` (booking_status_enum) - Booking status enum (e.g., 'pending', 'confirmed', 'cancelled', 'completed')
+- `payment_info` (jsonb) - Payment-related details (transaction ID, amount, method, etc.)
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- `listing_id` → `service_listing.listing_id` (many-to-one)
+- `itinerary_id` → `itinerary.itinerary_id` (many-to-one)
+
+**Key Notes:**
+- Bookings link users, services, and itineraries
+- `payment_info` jsonb allows flexible payment data storage
+- Bookings can be part of an itinerary or standalone
+
+---
+
+## Table: `recommendation`
+
+**Purpose:** User reviews/recommendations for service listings.
+
+**Columns:**
+- `recommendation_id` (int8, PRIMARY KEY) - Auto-incrementing recommendation identifier
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
+- `listing_id` (int8, FOREIGN KEY) - References `service_listing.listing_id`
+- `score` (numeric) - Rating score (e.g., 1-5, 1-10)
+- `reasoning` (text) - Textual review or reason for the score
+- `created_at` (timestamptz) - Review creation timestamp
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- `listing_id` → `service_listing.listing_id` (many-to-one)
+
+**Key Notes:**
+- Users can review services they've booked/used
+- Multiple recommendations per listing (aggregate for ratings)
+
+---
+
+## Common Patterns & Best Practices
+
+### User Identification
+- Always use `profiles.id` (which equals `auth.users.id`) for user identification
+- In JWT tokens, `sub` claim contains the user ID
+- When querying `profiles`, use `id` column (not `user_id`)
+
+### Role Determination
+- Check if `user_id` exists in `travel_agent` table to determine "agent" role
+- Default role is "traveler" if not in `travel_agent` table
+- Admin role may be determined by `verification_status` or separate admin table
+
+### JSONB Fields
+- `preferences`, `profile_details`, `contact_info`, `details`, `payment_info` are jsonb
+- Use proper JSON structure when updating these fields
+- Can query jsonb fields using PostgreSQL jsonb operators
+- Consider merging vs replacing when updating jsonb fields
+
+### Foreign Key Relationships
+- `user_id` consistently references `profiles.id` across tables
+- `agent_id` references `travel_agent.agent_id`
+- `listing_id` references `service_listing.listing_id`
+- `itinerary_id` references `itinerary.itinerary_id`
+
+### Enum Types
+- `itinerary_status_enum` - Itinerary statuses
+- `booking_status_enum` - Booking statuses
+- `service_type_enum` - Service categories
+- `verification_status_enum` - Agent verification statuses
+
+### Timestamps
+- Use `created_at` for creation timestamps
+- Use `updated_at` for last modification (currently only in `profiles`)
+- All timestamps are `timestamptz` (timezone-aware)
+
+---
+
+## Query Examples
+
+### Get user profile with role
+```python
+# Get profile
+profile = supabase.table("profiles").select("*").eq("id", user_id).execute()
+
+# Check if agent
+agent = supabase.table("travel_agent").select("*").eq("user_id", user_id).execute()
+role = "agent" if agent.data else "traveler"
+```
+
+### Get user's bookings with service details
+```python
+bookings = supabase.table("booking")\
+    .select("*, service_listing(*), itinerary(*)")\
+    .eq("user_id", user_id)\
+    .execute()
+```
+
+### Get agent's service listings
+```python
+listings = supabase.table("service_listing")\
+    .select("*")\
+    .eq("agent_id", agent_id)\
+    .execute()
+```
+
+---
+
+## Important Notes for Implementation
+
+1. **Always use `profiles.id` (not `user_id`) when querying profiles table**
+2. **Role is determined by presence in `travel_agent` table, not a column in `profiles`**
+3. **JSONB fields require proper JSON structure - validate before inserting**
+4. **Foreign keys use different column names: `user_id` in most tables, `id` in profiles**
+5. **Service role key is needed for backend operations that bypass RLS**
+6. **Consider Row Level Security (RLS) policies in Supabase for data access control**

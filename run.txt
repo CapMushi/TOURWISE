@@ -1,3 +1,4 @@
+cd backend
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 venv\Scripts\activate
 uvicorn app.main:app --reload --port 8000
