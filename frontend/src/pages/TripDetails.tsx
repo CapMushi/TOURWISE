@@ -1,22 +1,64 @@
-import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { getTripById } from "@/lib/api";
+import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Check, X } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle, Check, X, MapPin, Calendar, Users, DollarSign } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 
 export default function TripDetails() {
   const navigate = useNavigate();
   const { tripId } = useParams();
+  
+  const tripIdNum = tripId ? parseInt(tripId, 10) : null;
+  
+  const { data: trip, isLoading, error } = useQuery({
+    queryKey: ["trip", tripIdNum],
+    queryFn: () => getTripById(tripIdNum!),
+    enabled: !!tripIdNum,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Skeleton className="w-full h-[400px]" />
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <Skeleton className="h-96 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !trip) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <Alert variant="destructive" className="max-w-md">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {error instanceof Error ? error.message : "Trip not found"}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  const departureDate = new Date(trip.departure_time);
+  const arrivalDate = new Date(trip.arrival_time);
+  const durationDays = Math.ceil(
+    (arrivalDate.getTime() - departureDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
 
   return (
     <div className="min-h-screen bg-background">
       {/* Image Gallery */}
       <div className="w-full h-[400px] overflow-hidden">
         <img 
-          src={heroImage} 
-          alt="Trip destination" 
+          src={trip.image_url || heroImage} 
+          alt={`${trip.origin_city} to ${trip.destination_city}`}
           className="w-full h-full object-cover"
         />
       </div>
@@ -28,16 +70,51 @@ export default function TripDetails() {
           {/* Core Trip Details */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading text-2xl">Weekend Mountain Hiking Retreat</CardTitle>
+              <CardTitle className="font-heading text-2xl">
+                {trip.origin_city} → {trip.destination_city}
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <p><span className="font-medium">Trip ID:</span> TWH-24-001</p>
-              <p><span className="font-medium">Destination(s):</span> Naran Valley, Kaghan</p>
-              <p><span className="font-medium">Trip Type:</span> Adventure, Trekking</p>
-              <p><span className="font-medium">Duration:</span> 3 Days / 2 Nights</p>
-              <p><span className="font-medium">Trip Dates:</span> October 25th - October 27th, 2025</p>
-              <p><span className="font-medium">Suitability:</span> Families, Solo Travelers, Couples</p>
-              <p><span className="font-medium">Physical Rating:</span> Moderate</p>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Trip ID:</span>
+                <span>{trip.trip_id}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                <span className="font-medium">Destination:</span>
+                <span>{trip.destination_city}, {trip.destination_province}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                <span className="font-medium">Origin:</span>
+                <span>{trip.origin_city}</span>
+              </div>
+              <div>
+                <span className="font-medium">Transport Type:</span>
+                <span className="ml-2 capitalize">{trip.transport_type.replace("_", " ")}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                <span className="font-medium">Duration:</span>
+                <span>{durationDays} {durationDays === 1 ? "Day" : "Days"}</span>
+              </div>
+              <div>
+                <span className="font-medium">Trip Dates:</span>
+                <span className="ml-2">{format(departureDate, "MMMM dd")} - {format(arrivalDate, "MMMM dd, yyyy")}</span>
+              </div>
+              <div>
+                <span className="font-medium">Departure:</span>
+                <span className="ml-2">{format(departureDate, "PPp")}</span>
+              </div>
+              <div>
+                <span className="font-medium">Arrival:</span>
+                <span className="ml-2">{format(arrivalDate, "PPp")}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                <span className="font-medium">Available Seats:</span>
+                <span>{trip.available_seats} / {trip.total_seats}</span>
+              </div>
             </CardContent>
           </Card>
 
@@ -47,8 +124,12 @@ export default function TripDetails() {
               <CardTitle className="font-heading">💰 Pricing and Inclusions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-xl font-bold text-primary">$250 per person</p>
-              <p><span className="font-medium">Single Occupancy:</span> +$80</p>
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-5 w-5 text-primary" />
+                <p className="text-xl font-bold text-primary">
+                  ${parseFloat(trip.price.toString()).toFixed(2)} per person
+                </p>
+              </div>
               
               <div>
                 <h4 className="font-medium mb-2">Inclusions:</h4>
@@ -107,53 +188,52 @@ export default function TripDetails() {
             </CardContent>
           </Card>
 
-          {/* Flight Itinerary */}
+          {/* Bus Itinerary */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading">✈️ Flight Itinerary</CardTitle>
+              <CardTitle className="font-heading">🚌 Bus Itinerary</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="p-4 glass-panel rounded-lg border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-accent/5">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <p className="text-sm text-body-text">Airline</p>
-                    <p className="font-bold text-lg">Pakistan International Airlines</p>
+                    <p className="text-sm text-body-text">Transport Type</p>
+                    <p className="font-bold text-lg capitalize">{trip.transport_type.replace("_", " ")}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
-                    <span className="text-primary font-bold text-lg">PK</span>
+                    <span className="text-primary font-bold text-lg">🚌</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4 mb-3">
-                  <div>
-                    <p className="text-xs text-body-text mb-1">Flight Number</p>
-                    <p className="font-bold text-primary">PK701</p>
-                  </div>
+                <div className="grid grid-cols-2 gap-4 mb-3">
                   <div>
                     <p className="text-xs text-body-text mb-1">Route</p>
-                    <p className="font-medium">LHE → DXB → MAN</p>
+                    <p className="font-bold text-primary">{trip.origin_city} → {trip.destination_city}</p>
                   </div>
                   <div>
                     <p className="text-xs text-body-text mb-1">Duration</p>
-                    <p className="font-medium">12h 30m</p>
+                    <p className="font-medium">{durationDays} {durationDays === 1 ? "Day" : "Days"}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-3 border-t border-border">
                   <div>
                     <p className="text-xs text-body-text mb-1">Departure</p>
-                    <p className="font-bold">06:00 AM</p>
-                    <p className="text-xs text-body-text">Lahore (LHE)</p>
+                    <p className="font-bold">{format(departureDate, "h:mm a")}</p>
+                    <p className="text-xs text-body-text">{trip.origin_city}</p>
+                    <p className="text-xs text-body-text">{format(departureDate, "MMM dd, yyyy")}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-body-text mb-1">Arrival</p>
-                    <p className="font-bold">06:30 PM</p>
-                    <p className="text-xs text-body-text">Manchester (MAN)</p>
+                    <p className="font-bold">{format(arrivalDate, "h:mm a")}</p>
+                    <p className="text-xs text-body-text">{trip.destination_city}</p>
+                    <p className="text-xs text-body-text">{format(arrivalDate, "MMM dd, yyyy")}</p>
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-border">
                   <p className="text-xs text-body-text">
-                    <span className="font-medium">Class:</span> Economy | 
-                    <span className="font-medium ml-2">Stops:</span> 1 (Dubai) | 
-                    <span className="font-medium ml-2">Status:</span> <span className="text-accent">Confirmed</span>
+                    <span className="font-medium">Available Seats:</span> {trip.available_seats} / {trip.total_seats} | 
+                    <span className="font-medium ml-2">Status:</span> <span className="text-accent">
+                      {trip.available_seats > 0 ? "Available" : "Fully Booked"}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -203,41 +283,55 @@ export default function TripDetails() {
             </CardHeader>
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="day1">
-                  <AccordionTrigger>Day 1: Departure & Arrival</AccordionTrigger>
-                  <AccordionContent>
-                    <ul className="space-y-2 ml-4">
-                      <li>• 6:00 AM - Depart from Central Plaza, Lahore</li>
-                      <li>• 2:00 PM - Arrive at Naran Valley</li>
-                      <li>• 3:00 PM - Check-in at guesthouse</li>
-                      <li>• 7:00 PM - Welcome dinner & trip briefing</li>
-                    </ul>
-                  </AccordionContent>
-                </AccordionItem>
-                <AccordionItem value="day2">
-                  <AccordionTrigger>Day 2: Mountain Trek</AccordionTrigger>
-                  <AccordionContent>
-                    <ul className="space-y-2 ml-4">
-                      <li>• 7:00 AM - Breakfast</li>
-                      <li>• 8:00 AM - Guided morning hike to Saiful Malook Lake</li>
-                      <li>• 1:00 PM - Lunch (own expense)</li>
-                      <li>• 3:00 PM - Afternoon sightseeing in local markets</li>
-                      <li>• 7:00 PM - Group dinner</li>
-                    </ul>
-                  </AccordionContent>
-                </AccordionItem>
-                <AccordionItem value="day3">
-                  <AccordionTrigger>Day 3: Leisure & Return</AccordionTrigger>
-                  <AccordionContent>
-                    <ul className="space-y-2 ml-4">
-                      <li>• 7:00 AM - Breakfast</li>
-                      <li>• 8:00 AM - Morning leisure time</li>
-                      <li>• 11:00 AM - Check-out</li>
-                      <li>• 12:00 PM - Begin return journey</li>
-                      <li>• 8:00 PM - Arrive back at Lahore</li>
-                    </ul>
-                  </AccordionContent>
-                </AccordionItem>
+                {Array.from({ length: durationDays }, (_, index) => {
+                  const dayNumber = index + 1;
+                  const currentDate = new Date(departureDate);
+                  currentDate.setDate(departureDate.getDate() + index);
+                  
+                  let dayTitle = "";
+                  if (dayNumber === 1) {
+                    dayTitle = `Day ${dayNumber}: Departure & Arrival`;
+                  } else if (dayNumber === durationDays) {
+                    dayTitle = `Day ${dayNumber}: Leisure & Return`;
+                  } else {
+                    dayTitle = `Day ${dayNumber}: ${format(currentDate, "MMMM dd")}`;
+                  }
+                  
+                  return (
+                    <AccordionItem key={dayNumber} value={`day${dayNumber}`}>
+                      <AccordionTrigger>{dayTitle}</AccordionTrigger>
+                      <AccordionContent>
+                        <ul className="space-y-2 ml-4">
+                          {dayNumber === 1 && (
+                            <>
+                              <li>• {format(departureDate, "h:mm a")} - Depart from {trip.origin_city}</li>
+                              <li>• Check-in at accommodation</li>
+                              <li>• Welcome dinner & trip briefing</li>
+                            </>
+                          )}
+                          {dayNumber > 1 && dayNumber < durationDays && (
+                            <>
+                              <li>• 7:00 AM - Breakfast</li>
+                              <li>• Morning activities and sightseeing</li>
+                              <li>• 1:00 PM - Lunch</li>
+                              <li>• Afternoon activities</li>
+                              <li>• 7:00 PM - Group dinner</li>
+                            </>
+                          )}
+                          {dayNumber === durationDays && (
+                            <>
+                              <li>• 7:00 AM - Breakfast</li>
+                              <li>• Morning leisure time</li>
+                              <li>• Check-out from accommodation</li>
+                              <li>• Begin return journey</li>
+                              <li>• {format(arrivalDate, "h:mm a")} - Arrive back at {trip.origin_city}</li>
+                            </>
+                          )}
+                        </ul>
+                      </AccordionContent>
+                    </AccordionItem>
+                  );
+                })}
               </Accordion>
             </CardContent>
           </Card>
@@ -265,23 +359,27 @@ export default function TripDetails() {
                 <CardTitle className="font-heading">Book This Trip</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-body-text mb-1">Organized by</p>
-                  <p className="font-medium">Adventure Trails Pakistan</p>
-                  <p className="text-sm text-accent">★★★★★ 4.9 (127 reviews)</p>
-                </div>
+                {trip.agent_name && (
+                  <div>
+                    <p className="text-sm text-body-text mb-1">Organized by</p>
+                    <p className="font-medium">{trip.agent_name}</p>
+                  </div>
+                )}
                 
                 <div className="border-t border-border pt-4">
-                  <p className="text-3xl font-bold text-primary">$250</p>
+                  <p className="text-3xl font-bold text-primary">
+                    ${parseFloat(trip.price.toString()).toFixed(2)}
+                  </p>
                   <p className="text-sm text-body-text">per person</p>
                 </div>
 
                 <Button 
                   className="w-full" 
                   size="lg"
-                  onClick={() => navigate(`/booking/${tripId || 'TWH-24-001'}`)}
+                  onClick={() => navigate(`/booking/${trip.trip_id}`)}
+                  disabled={trip.available_seats === 0}
                 >
-                  Book Now
+                  {trip.available_seats === 0 ? "Fully Booked" : "Book Now"}
                 </Button>
 
                 <Button variant="secondary" className="w-full">
@@ -295,3 +393,4 @@ export default function TripDetails() {
     </div>
   );
 }
+

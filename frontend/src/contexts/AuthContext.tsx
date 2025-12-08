@@ -85,14 +85,65 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     []
   );
 
+  /**
+   * Sign in with Google OAuth.
+   * 
+   * IMPORTANT: The redirect URL is automatically set to `${window.location.origin}/login`.
+   * This means if you access the app via:
+   * - http://localhost:8080 → redirects to http://localhost:8080/login
+   * - http://192.168.1.8:8080 → redirects to http://192.168.1.8:8080/login
+   * 
+   * All possible redirect URLs MUST be whitelisted in Supabase Dashboard:
+   * Authentication → URL Configuration → Redirect URLs
+   * 
+   * Add both localhost and network IP URLs if accessing from different origins.
+   * Also ensure the Site URL in Supabase matches your primary access method or is set flexibly.
+   */
   const signInWithGoogle = useCallback(async () => {
-    const redirectTo = `${window.location.origin}/login`;
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo },
-    });
-    if (error) {
-      console.error("[Auth] Google sign-in error", error);
+    const currentOrigin = window.location.origin;
+    const redirectTo = `${currentOrigin}/login`;
+    
+    console.log("[Auth] Current origin:", currentOrigin);
+    console.log("[Auth] Google OAuth redirect URL:", redirectTo);
+    
+    // Warn if using network IP and provide configuration guidance
+    if (currentOrigin.includes("192.168.") || currentOrigin.includes("10.") || currentOrigin.includes("172.")) {
+      console.warn(
+        "[Auth] Network IP detected. Ensure the following is configured in Supabase:\n" +
+        "1. Go to Supabase Dashboard → Authentication → URL Configuration\n" +
+        `2. Add this URL to Redirect URLs: ${redirectTo}\n` +
+        "3. Update Site URL if needed (or leave it flexible)"
+      );
+    }
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { 
+          redirectTo,
+        },
+      });
+      
+      if (error) {
+        console.error("[Auth] Google sign-in error:", error);
+        console.error("[Auth] Error details:", JSON.stringify(error, null, 2));
+        throw error;
+      }
+      
+      if (data?.url) {
+        console.log("[Auth] OAuth URL generated:", data.url);
+        // Check if the URL contains the correct redirect
+        if (data.url.includes(redirectTo)) {
+          console.log("[Auth] ✓ Redirect URL confirmed in OAuth URL");
+        } else {
+          console.warn("[Auth] ⚠ Redirect URL may not match in OAuth URL");
+          console.warn("[Auth] This might indicate a Supabase configuration issue");
+          console.warn("[Auth] Check Supabase Dashboard → Authentication → URL Configuration");
+        }
+      }
+    } catch (error) {
+      console.error("[Auth] Failed to initiate Google OAuth:", error);
+      throw error;
     }
   }, []);
 

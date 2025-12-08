@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Search, Calendar as CalendarIcon, MapPin, DollarSign, Bus, Users } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { getTopAgents } from "@/lib/api";
+import { Search, Calendar as CalendarIcon, MapPin, DollarSign, Bus, Users, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Footer } from "@/components/layout/Footer";
+import { Skeleton } from "@/components/ui/skeleton";
 import heroImage from "@/assets/hero-tropical.jpg";
 import parisImage from "@/assets/trip-paris.jpg";
 import peruImage from "@/assets/trip-peru.jpg";
@@ -70,10 +73,49 @@ export default function TravelerHome() {
   const [priceTo, setPriceTo] = useState("");
   const [transportType, setTransportType] = useState("Any");
   const [travelers, setTravelers] = useState("2");
+  const [suitability, setSuitability] = useState("Any");
+
+  const { data: topAgentsData, isLoading: agentsLoading } = useQuery({
+    queryKey: ["top-agents"],
+    queryFn: () => getTopAgents(4),
+  });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    navigate("/search");
+    
+    // Build search params - only include non-empty values
+    const params = new URLSearchParams();
+    
+    if (province && province.trim()) {
+      params.set("province", province.trim());
+    }
+    if (city && city.trim()) {
+      params.set("city", city.trim());
+    }
+    if (departureDate) {
+      params.set("departureDate", departureDate.toISOString());
+    }
+    if (arrivalDate) {
+      params.set("arrivalDate", arrivalDate.toISOString());
+    }
+    if (priceFrom && priceFrom.trim() && parseFloat(priceFrom) > 0) {
+      params.set("priceFrom", priceFrom.trim());
+    }
+    if (priceTo && priceTo.trim() && parseFloat(priceTo) > 0) {
+      params.set("priceTo", priceTo.trim());
+    }
+    if (transportType && transportType !== "Any") {
+      params.set("transport", transportType);
+    }
+    if (travelers && travelers.trim() && parseInt(travelers) > 0) {
+      params.set("travelers", travelers.trim());
+    }
+    if (suitability && suitability !== "Any") {
+      params.set("suitability", suitability);
+    }
+    
+    // Navigate to search page with params (even if empty, it will show all trips)
+    navigate(`/search?${params.toString()}`);
   };
 
   return (
@@ -276,6 +318,25 @@ export default function TravelerHome() {
                   step="1"
                 />
               </div>
+
+              {/* Suitability */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-heading flex items-center gap-2">
+                  <Heart className="h-4 w-4" />
+                  Suitability
+                </Label>
+                <Select value={suitability} onValueChange={setSuitability}>
+                  <SelectTrigger className="bg-white/80">
+                    <SelectValue placeholder="Select suitability" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Any">Any</SelectItem>
+                    <SelectItem value="Solo Travelers">Solo Travelers</SelectItem>
+                    <SelectItem value="Families">Families</SelectItem>
+                    <SelectItem value="Couples">Couples</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <Button type="submit" className="w-full" size="lg">
@@ -315,21 +376,40 @@ export default function TravelerHome() {
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             Top Rated Travel Agents
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {["Sophie Laurent", "Carlos Rodriguez", "Yuki Tanaka", "David Mbeki"].map((agent, idx) => (
-              <div key={idx} className="glass-card p-6 text-center space-y-3">
-                <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-primary to-secondary" />
-                <h3 className="font-heading font-semibold text-heading">{agent}</h3>
-                <div className="flex items-center justify-center gap-1 text-sm">
-                  <span className="text-2xl">⭐</span>
-                  <span className="font-medium">4.9</span>
+          {agentsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : topAgentsData && topAgentsData.agents.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {topAgentsData.agents.map((agent) => (
+                <div key={agent.agent_id} className="glass-card p-6 text-center space-y-3">
+                  <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-primary to-secondary" />
+                  <h3 className="font-heading font-semibold text-heading">{agent.name}</h3>
+                  <div className="flex items-center justify-center gap-1 text-sm">
+                    <span className="text-2xl">⭐</span>
+                    <span className="font-medium">
+                      {agent.rating ? agent.rating.toFixed(1) : "N/A"}
+                    </span>
+                    {agent.numberofreviews !== undefined && agent.numberofreviews > 0 && (
+                      <span className="text-muted-foreground">
+                        ({agent.numberofreviews} {agent.numberofreviews === 1 ? "review" : "reviews"})
+                      </span>
+                    )}
+                  </div>
+                  <Button variant="outline" size="sm" className="w-full">
+                    View Profile
+                  </Button>
                 </div>
-                <Button variant="outline" size="sm" className="w-full">
-                  View Profile
-                </Button>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="glass-card p-8 text-center">
+              <p className="text-body-text">No rated agents available at the moment.</p>
+            </div>
+          )}
         </section>
       </div>
 
