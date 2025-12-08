@@ -16,9 +16,14 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `profiles` - Core user profile data
 - `travel_agent` - Agent-specific information
 - `itinerary` - User travel itineraries
-- `booking` - Service bookings
-- `service_listing` - Services offered by agents
-- `recommendation` - User reviews/recommendations
+- `booking` - Trip bookings
+- `booking_passengers` - Passenger details for bookings
+- `payments` - Payment records for bookings
+- `booking_notifications` - Booking-related notifications
+- `trips` - Trips offered by agents
+- `recommendation` - User reviews/recommendations for trips
+- `bus_pooling_requests` - Bus pooling requests between travel agents
+- `agent_messages` - Messages between travel agents
 
 ---
 
@@ -58,15 +63,18 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `contact_info` (jsonb) - Agent contact details (phone, address, etc.)
 - `profile_details` (jsonb) - Additional agent-specific profile data
 - `created_at` (timestamptz) - Account creation timestamp
+- `rating` (numeric) - Agent's rating (e.g., 1-5, 1-10)
+- `numberofreviews` (int4) - Number of reviews received by the agent
 
 **Relationships:**
 - `user_id` → `profiles.id` (many-to-one)
-- Referenced by `agent_id` in: `service_listing`
+- Referenced by `agent_id` in: `trips`
 
 **Key Notes:**
 - Presence in this table determines if user has "agent" role
 - To check if user is agent: query `travel_agent` table where `user_id = profiles.id`
 - Default `verification_status` is typically 'pending' for new agents
+- `rating` and `numberofreviews` are used for displaying top rated agents
 
 ---
 
@@ -82,6 +90,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `end_date` (date) - Trip end date
 - `status` (itinerary_status_enum) - Status enum (e.g., 'planned', 'active', 'completed', 'cancelled')
 - `created_at` (timestamptz) - Creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
 
 **Relationships:**
 - `user_id` → `profiles.id` (many-to-one)
@@ -90,77 +99,250 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 **Key Notes:**
 - Users can have multiple itineraries
 - Itineraries can contain multiple bookings
+- `updated_at` tracks when itinerary was last modified
 
 ---
 
-## Table: `service_listing`
+## Table: `trips`
 
-**Purpose:** Services offered by travel agents (transport, accommodation, tours, etc.).
+**Purpose:** Trips offered by travel agents with specific origin, destination, and transport details.
 
 **Columns:**
-- `listing_id` (int8, PRIMARY KEY) - Auto-incrementing listing identifier
+- `trip_id` (int8, PRIMARY KEY) - Auto-incrementing trip identifier
 - `agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id`
-- `type` (service_type_enum) - Service category enum (e.g., 'flight', 'hotel', 'car_rental', 'tour', 'transport')
-- `details` (jsonb) - Service-specific details (flexible JSON structure)
-- `price` (numeric) - Service price
-- `availability` (bool) - Whether service is currently available
-- `created_at` (timestamptz) - Listing creation timestamp
+- `origin_city` (text) - Origin city of the trip
+- `destination_province` (text) - Destination province/state
+- `destination_city` (text) - Destination city
+- `departure_time` (timestamptz) - Scheduled departure time
+- `arrival_time` (timestamptz) - Scheduled arrival time
+- `price` (numeric) - Trip price
+- `transport_type` (service_type_enum) - Type of transportation (e.g., 'flight', 'bus', 'train', 'car_rental', 'tour', 'transport')
+- `total_seats` (int4) - Total number of seats available
+- `available_seats` (int4) - Number of seats currently available
+- `created_at` (timestamptz) - Trip creation timestamp
+- `suitability` (suitability_enum) - Suitability for different traveler types (e.g., 'Solo Travelers', 'Families', 'Couples')
+- `image_url` (text) - URL to the trip's main image
 
 **Relationships:**
 - `agent_id` → `travel_agent.agent_id` (many-to-one)
-- Referenced by `listing_id` in: `booking`, `recommendation`
+- Referenced by `trip_id` in: `booking`, `recommendation`
 
 **Key Notes:**
-- Each listing belongs to one agent
-- `details` jsonb field allows flexible service-specific data
-- `type` enum categorizes the service
+- Each trip belongs to one agent
+- `transport_type` enum categorizes the transportation method
+- `suitability` enum indicates which traveler types the trip is suitable for
+- Seat availability is tracked with `total_seats` and `available_seats`
+- Trips have specific location fields (`origin_city`, `destination_city`, `destination_province`) for filtering and search
+- `image_url` stores the URL to the trip's main image (typically stored in Supabase Storage)
 
 ---
 
 ## Table: `booking`
 
-**Purpose:** Records bookings made by users for services.
+**Purpose:** Records bookings made by users for trips.
 
 **Columns:**
 - `booking_id` (int8, PRIMARY KEY) - Auto-incrementing booking identifier
 - `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
-- `listing_id` (int8, FOREIGN KEY) - References `service_listing.listing_id`
-- `itinerary_id` (int8, FOREIGN KEY) - References `itinerary.itinerary_id`
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
+- `itinerary_id` (int8, FOREIGN KEY, nullable) - References `itinerary.itinerary_id` (optional, bookings can be standalone)
 - `booking_date` (timestamptz) - When booking was made
-- `status` (booking_status_enum) - Booking status enum (e.g., 'pending', 'confirmed', 'cancelled', 'completed')
-- `payment_info` (jsonb) - Payment-related details (transaction ID, amount, method, etc.)
+- `status` (booking_status_enum) - Booking status enum (e.g., 'pending', 'confirmed', 'cancelled', 'completed', 'refunded', 'expired')
+- `payment_info` (jsonb) - Payment-related details (legacy field, use `payments` table for detailed payment tracking)
+- `number_of_seats` (int4) - Number of seats booked (must be > 0)
+- `total_price` (numeric) - Total price for the booking (price per seat × number of seats)
+- `passenger_names` (text[]) - Array of passenger names (quick reference)
+- `contact_email` (text) - Contact email for the booking
+- `contact_phone` (text) - Contact phone number for the booking
+- `special_requests` (text) - Special requests or notes from the traveler
+- `booking_reference` (text, UNIQUE) - Unique booking reference code (e.g., "TW-2025-001234")
+- `confirmed_at` (timestamptz, nullable) - When booking was confirmed by agent
+- `cancelled_at` (timestamptz, nullable) - When booking was cancelled
+- `cancellation_reason` (text, nullable) - Reason for cancellation
+- `refund_amount` (numeric, nullable) - Refund amount if booking was cancelled
+- `updated_at` (timestamptz) - Last update timestamp
 
 **Relationships:**
 - `user_id` → `profiles.id` (many-to-one)
-- `listing_id` → `service_listing.listing_id` (many-to-one)
-- `itinerary_id` → `itinerary.itinerary_id` (many-to-one)
+- `trip_id` → `trips.trip_id` (many-to-one)
+- `itinerary_id` → `itinerary.itinerary_id` (many-to-one, nullable)
+- Referenced by `booking_id` in: `booking_passengers`, `payments`, `booking_notifications`
 
 **Key Notes:**
-- Bookings link users, services, and itineraries
-- `payment_info` jsonb allows flexible payment data storage
-- Bookings can be part of an itinerary or standalone
+- Bookings link users, trips, and optionally itineraries
+- `itinerary_id` is nullable - bookings can be standalone or part of an itinerary
+- `number_of_seats` must be positive (constraint: `number_of_seats > 0`)
+- `total_price` must be non-negative (constraint: `total_price >= 0`)
+- `booking_reference` is unique and used for booking lookup
+- `passenger_names` is an array for quick reference; detailed passenger info is in `booking_passengers` table
+- `payment_info` is legacy; use `payments` table for detailed payment tracking
+- Status workflow: pending → confirmed → completed, or pending → cancelled → refunded
+
+---
+
+## Table: `booking_passengers`
+
+**Purpose:** Stores detailed passenger information for each booking.
+
+**Columns:**
+- `passenger_id` (int8, PRIMARY KEY) - Auto-incrementing passenger identifier
+- `booking_id` (int8, FOREIGN KEY) - References `booking.booking_id`
+- `full_name` (text) - Passenger's full name
+- `age` (int4, nullable) - Passenger's age
+- `gender` (text, nullable) - Passenger's gender ('male', 'female', 'other', or NULL)
+- `passport_number` (text, nullable) - Passport number for international travel
+- `emergency_contact_name` (text, nullable) - Emergency contact person's name
+- `emergency_contact_phone` (text, nullable) - Emergency contact phone number
+- `dietary_restrictions` (text, nullable) - Dietary restrictions or preferences
+- `medical_conditions` (text, nullable) - Medical conditions or special needs
+- `created_at` (timestamptz) - Record creation timestamp
+
+**Relationships:**
+- `booking_id` → `booking.booking_id` (many-to-one)
+
+**Key Notes:**
+- Multiple passengers can be associated with a single booking
+- Passenger details are optional but recommended for trip planning
+- Emergency contact information is important for safety
+- Dietary and medical information helps agents prepare appropriately
+
+---
+
+## Table: `payments`
+
+**Purpose:** Tracks payment transactions for bookings.
+
+**Columns:**
+- `payment_id` (int8, PRIMARY KEY) - Auto-incrementing payment identifier
+- `booking_id` (int8, FOREIGN KEY) - References `booking.booking_id`
+- `amount` (numeric) - Payment amount (must be > 0)
+- `currency` (text) - Currency code (default: 'USD')
+- `payment_method` (text) - Payment method ('card', 'bank_transfer', 'cash', 'paypal', etc.)
+- `payment_status` (text) - Payment status ('pending', 'completed', 'failed', 'refunded')
+- `transaction_id` (text, UNIQUE, nullable) - External payment gateway transaction ID
+- `payment_date` (timestamptz, nullable) - When payment was processed
+- `refunded_at` (timestamptz, nullable) - When payment was refunded
+- `refund_amount` (numeric, nullable) - Refund amount if payment was refunded
+- `payment_details` (jsonb, nullable) - Additional payment gateway response data
+- `created_at` (timestamptz) - Payment record creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
+
+**Relationships:**
+- `booking_id` → `booking.booking_id` (many-to-one)
+
+**Key Notes:**
+- Multiple payments can be associated with a single booking (partial payments, refunds)
+- `amount` must be positive (constraint: `amount > 0`)
+- `transaction_id` is unique and links to external payment gateway
+- `payment_details` jsonb stores gateway-specific response data
+- Payment status workflow: pending → completed, or pending → failed, or completed → refunded
+
+---
+
+## Table: `booking_notifications`
+
+**Purpose:** Stores booking-related notifications for users.
+
+**Columns:**
+- `notification_id` (int8, PRIMARY KEY) - Auto-incrementing notification identifier
+- `booking_id` (int8, FOREIGN KEY) - References `booking.booking_id`
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
+- `notification_type` (text) - Type of notification ('booking_confirmed', 'payment_received', 'trip_reminder', 'cancellation', 'refund_processed', etc.)
+- `title` (text) - Notification title
+- `message` (text) - Notification message content
+- `is_read` (boolean) - Whether notification has been read by user (default: false)
+- `created_at` (timestamptz) - Notification creation timestamp
+
+**Relationships:**
+- `booking_id` → `booking.booking_id` (many-to-one)
+- `user_id` → `profiles.id` (many-to-one)
+
+**Key Notes:**
+- Notifications are created for various booking events
+- `is_read` flag tracks read status for unread notification counts
+- Notifications can be filtered by `user_id` and `is_read` for efficient querying
+- Used for in-app notifications and can be extended for email/push notifications
 
 ---
 
 ## Table: `recommendation`
 
-**Purpose:** User reviews/recommendations for service listings.
+**Purpose:** User reviews/recommendations for trips.
 
 **Columns:**
 - `recommendation_id` (int8, PRIMARY KEY) - Auto-incrementing recommendation identifier
 - `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
-- `listing_id` (int8, FOREIGN KEY) - References `service_listing.listing_id`
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
 - `score` (numeric) - Rating score (e.g., 1-5, 1-10)
 - `reasoning` (text) - Textual review or reason for the score
 - `created_at` (timestamptz) - Review creation timestamp
 
 **Relationships:**
 - `user_id` → `profiles.id` (many-to-one)
-- `listing_id` → `service_listing.listing_id` (many-to-one)
+- `trip_id` → `trips.trip_id` (many-to-one)
 
 **Key Notes:**
-- Users can review services they've booked/used
-- Multiple recommendations per listing (aggregate for ratings)
+- Users can review trips they've booked/used
+- Multiple recommendations per trip (aggregate for ratings)
+
+---
+
+## Table: `bus_pooling_requests`
+
+**Purpose:** Manages bus pooling requests between travel agents for matching trips.
+
+**Columns:**
+- `request_id` (int8, PRIMARY KEY) - Auto-incrementing request identifier
+- `requester_agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id` (agent making the request)
+- `target_agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id` (agent receiving the request)
+- `requester_trip_id` (int8, FOREIGN KEY) - References `trips.trip_id` (requester's trip)
+- `target_trip_id` (int8, FOREIGN KEY) - References `trips.trip_id` (target agent's trip)
+- `status` (pooling_status_enum) - Request status: 'pending', 'approved', 'rejected', 'active', 'completed', 'cancelled'
+- `message` (text) - Optional message from requester
+- `seat_management` (text) - Seat management option: 'combined' or 'separate'
+- `selected_bus_agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id` (which agent's bus to use, set when approved)
+- `created_at` (timestamptz) - Request creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
+
+**Relationships:**
+- `requester_agent_id` → `travel_agent.agent_id` (many-to-one)
+- `target_agent_id` → `travel_agent.agent_id` (many-to-one)
+- `requester_trip_id` → `trips.trip_id` (many-to-one)
+- `target_trip_id` → `trips.trip_id` (many-to-one)
+- `selected_bus_agent_id` → `travel_agent.agent_id` (many-to-one, nullable)
+
+**Key Notes:**
+- Agents cannot create pooling requests with themselves
+- Trips must match: same origin_city, destination_city, same date (any time), same suitability
+- Status workflow: pending → approved/rejected → active → completed
+- `seat_management` determines if seats are combined or managed separately
+- `selected_bus_agent_id` indicates which agent's bus will be used (set during approval)
+
+---
+
+## Table: `agent_messages`
+
+**Purpose:** Stores messages between travel agents for collaboration and communication.
+
+**Columns:**
+- `message_id` (int8, PRIMARY KEY) - Auto-incrementing message identifier
+- `sender_agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id` (sender)
+- `receiver_agent_id` (int8, FOREIGN KEY) - References `travel_agent.agent_id` (receiver)
+- `subject` (text) - Message subject/title
+- `content` (text) - Message content
+- `related_pooling_request_id` (int8, FOREIGN KEY) - References `bus_pooling_requests.request_id` (optional, links message to pooling request)
+- `is_read` (boolean) - Whether message has been read by receiver
+- `created_at` (timestamptz) - Message creation timestamp
+
+**Relationships:**
+- `sender_agent_id` → `travel_agent.agent_id` (many-to-one)
+- `receiver_agent_id` → `travel_agent.agent_id` (many-to-one)
+- `related_pooling_request_id` → `bus_pooling_requests.request_id` (many-to-one, nullable)
+
+**Key Notes:**
+- Agents cannot send messages to themselves
+- Messages can be linked to pooling requests for context
+- `is_read` flag tracks read status for notifications
 
 ---
 
@@ -177,7 +359,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - Admin role may be determined by `verification_status` or separate admin table
 
 ### JSONB Fields
-- `preferences`, `profile_details`, `contact_info`, `details`, `payment_info` are jsonb
+- `preferences`, `profile_details`, `contact_info`, `payment_info` are jsonb
 - Use proper JSON structure when updating these fields
 - Can query jsonb fields using PostgreSQL jsonb operators
 - Consider merging vs replacing when updating jsonb fields
@@ -185,19 +367,23 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 ### Foreign Key Relationships
 - `user_id` consistently references `profiles.id` across tables
 - `agent_id` references `travel_agent.agent_id`
-- `listing_id` references `service_listing.listing_id`
+- `trip_id` references `trips.trip_id`
 - `itinerary_id` references `itinerary.itinerary_id`
+- `booking_id` references `booking.booking_id` (in `booking_passengers`, `payments`, `booking_notifications`)
 
 ### Enum Types
 - `itinerary_status_enum` - Itinerary statuses
 - `booking_status_enum` - Booking statuses
-- `service_type_enum` - Service categories
+- `service_type_enum` - Transportation/service categories (used in `trips.transport_type`)
 - `verification_status_enum` - Agent verification statuses
+- `suitability_enum` - Suitability categories (used in `trips.suitability`, e.g., 'Solo Travelers', 'Families', 'Couples')
+- `pooling_status_enum` - Bus pooling request statuses: 'pending', 'approved', 'rejected', 'active', 'completed', 'cancelled'
 
 ### Timestamps
 - Use `created_at` for creation timestamps
-- Use `updated_at` for last modification (currently only in `profiles`)
+- Use `updated_at` for last modification (in `profiles`, `itinerary`, `booking`, `payments`, `bus_pooling_requests`)
 - All timestamps are `timestamptz` (timezone-aware)
+- Special timestamps: `confirmed_at`, `cancelled_at`, `payment_date`, `refunded_at` track specific events
 
 ---
 
@@ -213,19 +399,52 @@ agent = supabase.table("travel_agent").select("*").eq("user_id", user_id).execut
 role = "agent" if agent.data else "traveler"
 ```
 
-### Get user's bookings with service details
+### Get user's bookings with trip details
 ```python
 bookings = supabase.table("booking")\
-    .select("*, service_listing(*), itinerary(*)")\
+    .select("*, trips(*), itinerary(*), booking_passengers(*), payments(*)")\
     .eq("user_id", user_id)\
     .execute()
 ```
 
-### Get agent's service listings
+### Get booking with all related data
 ```python
-listings = supabase.table("service_listing")\
+booking = supabase.table("booking")\
+    .select("*, trips(*), booking_passengers(*), payments(*), booking_notifications(*)")\
+    .eq("booking_id", booking_id)\
+    .execute()
+```
+
+### Get payments for a booking
+```python
+payments = supabase.table("payments")\
+    .select("*")\
+    .eq("booking_id", booking_id)\
+    .order("created_at", desc=True)\
+    .execute()
+```
+
+### Get agent's trips
+```python
+trips = supabase.table("trips")\
     .select("*")\
     .eq("agent_id", agent_id)\
+    .execute()
+```
+
+### Get available trips with agent information
+```python
+trips = supabase.table("trips")\
+    .select("*, travel_agent(*)")\
+    .gt("available_seats", 0)\
+    .execute()
+```
+
+### Get trip recommendations with user details
+```python
+recommendations = supabase.table("recommendation")\
+    .select("*, trips(*), profiles(username)")\
+    .eq("trip_id", trip_id)\
     .execute()
 ```
 
@@ -239,3 +458,10 @@ listings = supabase.table("service_listing")\
 4. **Foreign keys use different column names: `user_id` in most tables, `id` in profiles**
 5. **Service role key is needed for backend operations that bypass RLS**
 6. **Consider Row Level Security (RLS) policies in Supabase for data access control**
+7. **When booking a trip, ensure `available_seats` is decremented and `total_seats >= available_seats`**
+8. **Trips have specific location fields (`origin_city`, `destination_city`, `destination_province`) for filtering and search**
+9. **Booking workflow: Create booking → Create passengers → Process payment → Confirm booking → Send notifications**
+10. **Booking reference should be unique and generated in format: `TW-{YEAR}-{SEQUENTIAL}` (e.g., TW-2025-001234)**
+11. **When cancelling booking, increment `available_seats` and process refund if applicable**
+12. **Use `payments` table for detailed payment tracking instead of `payment_info` jsonb field**
+13. **Passenger details in `booking_passengers` are separate from quick reference `passenger_names` array in booking**

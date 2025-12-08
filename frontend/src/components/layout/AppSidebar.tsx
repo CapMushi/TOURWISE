@@ -1,4 +1,4 @@
-import { Home, MapPin, User, LogOut, LayoutDashboard, Bell, Briefcase, MessageSquare, Users, UserCog } from "lucide-react";
+import { Home, MapPin, User, LogOut, LayoutDashboard, Bell, Briefcase, MessageSquare, Users, UserCog, Calendar } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
   Sidebar,
@@ -19,6 +19,7 @@ interface AppSidebarProps {
 const travelerItems = [
   { title: "Home", url: "/", icon: Home },
   { title: "My Trips", url: "/my-trips", icon: MapPin },
+  { title: "My Bookings", url: "/my-bookings", icon: Calendar },
   { title: "Profile", url: "/profile", icon: User },
 ];
 

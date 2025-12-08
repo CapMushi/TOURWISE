@@ -4,45 +4,175 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { createTrip, CreateTripRequest } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { Heart } from "lucide-react";
+
+// Transport type options based on service_type_enum
+const TRANSPORT_TYPES = [
+  { value: "flight", label: "Flight" },
+  { value: "bus", label: "Bus" },
+  { value: "train", label: "Train" },
+  { value: "car_rental", label: "Car Rental" },
+  { value: "tour", label: "Tour" },
+  { value: "transport", label: "Transport" },
+];
 
 export default function AddTrip() {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    tripName: "",
-    tripId: "",
-    destination: "",
-    tripType: "",
-    duration: "",
-    dates: "",
-    suitability: "",
-    physicalRating: "",
-    basePrice: "",
-    inclusions: "",
-    exclusions: "",
-    transportMode: "",
-    meetingPoint: "",
-    departureTime: "",
-    accommodationType: "",
-    accommodationName: "",
-    roomingBasis: "",
-    mealPlan: "",
-    itinerary: "",
-    minGroupSize: "",
-    maxGroupSize: "",
-    bookingDeadline: "",
-    cancellationPolicy: "",
-    whatToPack: "",
-    emergencyContact: "",
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<CreateTripRequest>({
+    origin_city: "",
+    destination_province: "",
+    destination_city: "",
+    departure_time: "",
+    arrival_time: "",
+    price: 0,
+    transport_type: "",
+    total_seats: 0,
+    available_seats: undefined, // Will default to total_seats on backend
+    suitability: undefined,
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Ensure suitability is always a valid string for Select component
+  const suitabilityValue = formData.suitability || "any";
+
+  // Helper to convert datetime-local input to ISO string
+  const toISOString = (localDateTime: string): string => {
+    if (!localDateTime) return "";
+    // datetime-local format: "YYYY-MM-DDTHH:mm"
+    // Convert to ISO 8601: "YYYY-MM-DDTHH:mm:ss.sssZ"
+    return new Date(localDateTime).toISOString();
+  };
+
+  // Validate form data
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.origin_city.trim()) {
+      newErrors.origin_city = "Origin city is required";
+    }
+
+    if (!formData.destination_province.trim()) {
+      newErrors.destination_province = "Destination province is required";
+    }
+
+    if (!formData.destination_city.trim()) {
+      newErrors.destination_city = "Destination city is required";
+    }
+
+    if (!formData.departure_time) {
+      newErrors.departure_time = "Departure time is required";
+    }
+
+    if (!formData.arrival_time) {
+      newErrors.arrival_time = "Arrival time is required";
+    }
+
+    if (formData.departure_time && formData.arrival_time) {
+      const departure = new Date(formData.departure_time);
+      const arrival = new Date(formData.arrival_time);
+      if (arrival <= departure) {
+        newErrors.arrival_time = "Arrival time must be after departure time";
+      }
+    }
+
+    if (formData.price <= 0) {
+      newErrors.price = "Price must be greater than 0";
+    }
+
+    if (!formData.transport_type) {
+      newErrors.transport_type = "Transport type is required";
+    }
+
+    if (formData.total_seats <= 0) {
+      newErrors.total_seats = "Total seats must be greater than 0";
+    }
+
+    if (formData.available_seats !== undefined) {
+      if (formData.available_seats < 0) {
+        newErrors.available_seats = "Available seats cannot be negative";
+      }
+      if (formData.available_seats > formData.total_seats) {
+        newErrors.available_seats = "Available seats cannot exceed total seats";
+      }
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Save trip with "Pending Approval" status (in a real app, this would save to backend)
-    toast.success("Trip submitted for admin approval");
-    navigate("/agent/manage-trips");
+
+    if (!validateForm()) {
+      toast.error("Please fix the errors in the form");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Prepare request data with ISO datetime strings
+      const requestData: CreateTripRequest = {
+        ...formData,
+        departure_time: toISOString(formData.departure_time),
+        arrival_time: toISOString(formData.arrival_time),
+        price: Number(formData.price),
+        total_seats: Number(formData.total_seats),
+        available_seats: formData.available_seats !== undefined ? Number(formData.available_seats) : undefined,
+        suitability: formData.suitability || undefined, // Convert empty string to undefined
+      };
+
+      const response = await createTrip(requestData);
+
+      toast.success(`Trip created successfully! Trip ID: ${response.trip_id}`);
+      navigate("/agent/manage-trips");
+    } catch (error) {
+      console.error("Error creating trip:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to create trip. Please try again.";
+      
+      // Check if user is not registered as a travel agent
+      if (errorMessage.includes("not a registered travel agent") || errorMessage.includes("agent verification")) {
+        toast.error("You need to register as a travel agent first", {
+          description: "Redirecting to registration...",
+          duration: 5000,
+        });
+        // Give user option to quickly register and verify
+        setTimeout(() => {
+          if (user) {
+            // If authenticated, redirect to agent verification to skip verification
+            navigate("/agent-verification");
+          } else {
+            // If not authenticated, go to role selection
+            navigate("/role-selection");
+          }
+        }, 2000);
+      } else {
+        toast.error(errorMessage);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-set available_seats when total_seats changes (if available_seats is not manually set)
+  const handleTotalSeatsChange = (value: string) => {
+    const totalSeats = Number(value);
+    setFormData((prev) => ({
+      ...prev,
+      total_seats: totalSeats,
+      // If available_seats is undefined or equals old total_seats, update it
+      available_seats:
+        prev.available_seats === undefined || prev.available_seats === prev.total_seats
+          ? totalSeats
+          : prev.available_seats,
+    }));
   };
 
   return (
@@ -50,94 +180,165 @@ export default function AddTrip() {
       <h1 className="text-4xl font-heading font-bold text-heading mb-8">Create a New Trip</h1>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Core Trip Details */}
+        {/* Location Details */}
         <Card className="glass-panel border-0">
           <CardHeader>
-            <CardTitle className="font-heading text-2xl">Core Trip Details</CardTitle>
+            <CardTitle className="font-heading text-2xl">Location Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="origin_city">
+                  Origin City <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="origin_city"
+                  placeholder="e.g., Lahore"
+                  value={formData.origin_city}
+                  onChange={(e) => setFormData({ ...formData, origin_city: e.target.value })}
+                  className="glass-panel border-white/30"
+                  required
+                />
+                {errors.origin_city && <p className="text-sm text-red-500">{errors.origin_city}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="destination_province">
+                  Destination Province <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="destination_province"
+                  placeholder="e.g., Khyber Pakhtunkhwa"
+                  value={formData.destination_province}
+                  onChange={(e) => setFormData({ ...formData, destination_province: e.target.value })}
+                  className="glass-panel border-white/30"
+                  required
+                />
+                {errors.destination_province && <p className="text-sm text-red-500">{errors.destination_province}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="destination_city">
+                  Destination City <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="destination_city"
+                  placeholder="e.g., Naran"
+                  value={formData.destination_city}
+                  onChange={(e) => setFormData({ ...formData, destination_city: e.target.value })}
+                  className="glass-panel border-white/30"
+                  required
+                />
+                {errors.destination_city && <p className="text-sm text-red-500">{errors.destination_city}</p>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Schedule */}
+        <Card className="glass-panel border-0">
+          <CardHeader>
+            <CardTitle className="font-heading text-2xl">Schedule</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="tripName">Trip Name</Label>
+                <Label htmlFor="departure_time">
+                  Departure Time <span className="text-red-500">*</span>
+                </Label>
                 <Input
-                  id="tripName"
-                  placeholder="e.g., Weekend Mountain Hiking Retreat"
-                  value={formData.tripName}
-                  onChange={(e) => setFormData({ ...formData, tripName: e.target.value })}
+                  id="departure_time"
+                  type="datetime-local"
+                  value={formData.departure_time}
+                  onChange={(e) => setFormData({ ...formData, departure_time: e.target.value })}
                   className="glass-panel border-white/30"
+                  required
                 />
+                {errors.departure_time && <p className="text-sm text-red-500">{errors.departure_time}</p>}
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="tripId">Trip ID</Label>
+                <Label htmlFor="arrival_time">
+                  Arrival Time <span className="text-red-500">*</span>
+                </Label>
                 <Input
-                  id="tripId"
-                  placeholder="e.g., TWH-24-001"
-                  value={formData.tripId}
-                  onChange={(e) => setFormData({ ...formData, tripId: e.target.value })}
+                  id="arrival_time"
+                  type="datetime-local"
+                  value={formData.arrival_time}
+                  onChange={(e) => setFormData({ ...formData, arrival_time: e.target.value })}
                   className="glass-panel border-white/30"
+                  required
                 />
+                {errors.arrival_time && <p className="text-sm text-red-500">{errors.arrival_time}</p>}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Pricing & Transport */}
+        <Card className="glass-panel border-0">
+          <CardHeader>
+            <CardTitle className="font-heading text-2xl">Pricing & Transport</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="destination">Destination(s)</Label>
+                <Label htmlFor="price">
+                  Price (per person) <span className="text-red-500">*</span>
+                </Label>
                 <Input
-                  id="destination"
-                  placeholder="e.g., Naran Valley, Kaghan"
-                  value={formData.destination}
-                  onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
+                  id="price"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="e.g., 250.00"
+                  value={formData.price || ""}
+                  onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
                   className="glass-panel border-white/30"
+                  required
                 />
+                {errors.price && <p className="text-sm text-red-500">{errors.price}</p>}
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="tripType">Trip Type</Label>
-                <Input
-                  id="tripType"
-                  placeholder="e.g., Adventure, Trekking"
-                  value={formData.tripType}
-                  onChange={(e) => setFormData({ ...formData, tripType: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="duration">Duration</Label>
-                <Input
-                  id="duration"
-                  placeholder="e.g., 3 Days / 2 Nights"
-                  value={formData.duration}
-                  onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="dates">Trip Dates</Label>
-                <Input
-                  id="dates"
-                  placeholder="e.g., October 25th - October 27th, 2025"
-                  value={formData.dates}
-                  onChange={(e) => setFormData({ ...formData, dates: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="suitability">Suitability</Label>
-                <Input
-                  id="suitability"
-                  placeholder="e.g., Families, Solo Travelers, Couples"
-                  value={formData.suitability}
-                  onChange={(e) => setFormData({ ...formData, suitability: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="physicalRating">Physical Rating</Label>
-                <Select value={formData.physicalRating} onValueChange={(value) => setFormData({ ...formData, physicalRating: value })}>
+                <Label htmlFor="transport_type">
+                  Transport Type <span className="text-red-500">*</span>
+                </Label>
+                <Select
+                  value={formData.transport_type}
+                  onValueChange={(value) => setFormData({ ...formData, transport_type: value })}
+                >
                   <SelectTrigger className="glass-panel border-white/30">
-                    <SelectValue placeholder="Select rating" />
+                    <SelectValue placeholder="Select transport type" />
                   </SelectTrigger>
                   <SelectContent className="glass-panel border-white/30 bg-white/95 backdrop-blur-glass z-50">
-                    <SelectItem value="easy">Easy</SelectItem>
-                    <SelectItem value="moderate">Moderate</SelectItem>
-                    <SelectItem value="challenging">Challenging</SelectItem>
-                    <SelectItem value="strenuous">Strenuous</SelectItem>
+                    {TRANSPORT_TYPES.map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {type.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.transport_type && <p className="text-sm text-red-500">{errors.transport_type}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="suitability" className="flex items-center gap-2">
+                  <Heart className="h-4 w-4" />
+                  Suitability
+                </Label>
+                <Select 
+                  value={suitabilityValue} 
+                  onValueChange={(value) => setFormData({ ...formData, suitability: value === "any" ? undefined : value })}
+                >
+                  <SelectTrigger className="glass-panel border-white/30">
+                    <SelectValue placeholder="Select suitability" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any</SelectItem>
+                    <SelectItem value="Solo Travelers">Solo Travelers</SelectItem>
+                    <SelectItem value="Families">Families</SelectItem>
+                    <SelectItem value="Couples">Couples</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -145,278 +346,70 @@ export default function AddTrip() {
           </CardContent>
         </Card>
 
-        {/* Pricing and Inclusions */}
+        {/* Seating */}
         <Card className="glass-panel border-0">
           <CardHeader>
-            <CardTitle className="font-heading text-2xl">Pricing and Inclusions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="basePrice">Base Price (per person)</Label>
-              <Input
-                id="basePrice"
-                placeholder="e.g., $250"
-                value={formData.basePrice}
-                onChange={(e) => setFormData({ ...formData, basePrice: e.target.value })}
-                className="glass-panel border-white/30"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="inclusions">Inclusions (one per line)</Label>
-              <Textarea
-                id="inclusions"
-                placeholder="e.g., Accommodation (Twin-share)&#10;Breakfast daily&#10;All guided tours"
-                rows={5}
-                value={formData.inclusions}
-                onChange={(e) => setFormData({ ...formData, inclusions: e.target.value })}
-                className="glass-panel border-white/30"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="exclusions">Exclusions (one per line)</Label>
-              <Textarea
-                id="exclusions"
-                placeholder="e.g., Meals not listed&#10;Personal expenses&#10;Travel insurance"
-                rows={5}
-                value={formData.exclusions}
-                onChange={(e) => setFormData({ ...formData, exclusions: e.target.value })}
-                className="glass-panel border-white/30"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Transportation & Logistics */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Transportation & Logistics</CardTitle>
+            <CardTitle className="font-heading text-2xl">Seating Capacity</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="transportMode">Primary Transport Mode</Label>
+                <Label htmlFor="total_seats">
+                  Total Seats <span className="text-red-500">*</span>
+                </Label>
                 <Input
-                  id="transportMode"
-                  placeholder="e.g., Carpooling / Self-Drive"
-                  value={formData.transportMode}
-                  onChange={(e) => setFormData({ ...formData, transportMode: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="meetingPoint">Meeting Point</Label>
-                <Input
-                  id="meetingPoint"
-                  placeholder="e.g., Central Plaza, Lahore"
-                  value={formData.meetingPoint}
-                  onChange={(e) => setFormData({ ...formData, meetingPoint: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="departureTime">Departure/Return Time</Label>
-                <Input
-                  id="departureTime"
-                  placeholder="e.g., Fri 6:00 AM / Sun 8:00 PM"
-                  value={formData.departureTime}
-                  onChange={(e) => setFormData({ ...formData, departureTime: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Accommodation & Meals */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Accommodation & Meals</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="accommodationType">Accommodation Type</Label>
-                <Input
-                  id="accommodationType"
-                  placeholder="e.g., Guesthouse"
-                  value={formData.accommodationType}
-                  onChange={(e) => setFormData({ ...formData, accommodationType: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="accommodationName">Accommodation Name</Label>
-                <Input
-                  id="accommodationName"
-                  placeholder="e.g., Mountain View Lodge"
-                  value={formData.accommodationName}
-                  onChange={(e) => setFormData({ ...formData, accommodationName: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="roomingBasis">Rooming Basis</Label>
-                <Input
-                  id="roomingBasis"
-                  placeholder="e.g., Twin-share basis"
-                  value={formData.roomingBasis}
-                  onChange={(e) => setFormData({ ...formData, roomingBasis: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mealPlan">Meal Plan</Label>
-                <Input
-                  id="mealPlan"
-                  placeholder="e.g., Breakfast & Dinner included"
-                  value={formData.mealPlan}
-                  onChange={(e) => setFormData({ ...formData, mealPlan: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Detailed Itinerary */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Detailed Itinerary</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="itinerary">Day-by-Day Itinerary</Label>
-              <Textarea
-                id="itinerary"
-                placeholder="Day 1: Departure at 6 AM...&#10;Day 2: Morning hike...&#10;Day 3: Return travel..."
-                rows={8}
-                value={formData.itinerary}
-                onChange={(e) => setFormData({ ...formData, itinerary: e.target.value })}
-                className="glass-panel border-white/30"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Booking & Policies */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Booking & Policies</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="minGroupSize">Min Group Size</Label>
-                <Input
-                  id="minGroupSize"
+                  id="total_seats"
                   type="number"
-                  placeholder="e.g., 10"
-                  value={formData.minGroupSize}
-                  onChange={(e) => setFormData({ ...formData, minGroupSize: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="maxGroupSize">Max Group Size</Label>
-                <Input
-                  id="maxGroupSize"
-                  type="number"
+                  min="1"
                   placeholder="e.g., 20"
-                  value={formData.maxGroupSize}
-                  onChange={(e) => setFormData({ ...formData, maxGroupSize: e.target.value })}
+                  value={formData.total_seats || ""}
+                  onChange={(e) => handleTotalSeatsChange(e.target.value)}
                   className="glass-panel border-white/30"
+                  required
                 />
+                {errors.total_seats && <p className="text-sm text-red-500">{errors.total_seats}</p>}
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="bookingDeadline">Booking Deadline</Label>
+                <Label htmlFor="available_seats">Available Seats (optional)</Label>
                 <Input
-                  id="bookingDeadline"
-                  placeholder="e.g., October 20, 2025"
-                  value={formData.bookingDeadline}
-                  onChange={(e) => setFormData({ ...formData, bookingDeadline: e.target.value })}
+                  id="available_seats"
+                  type="number"
+                  min="0"
+                  max={formData.total_seats}
+                  placeholder={`Defaults to ${formData.total_seats || "total seats"}`}
+                  value={formData.available_seats !== undefined ? formData.available_seats : ""}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      available_seats: e.target.value ? parseInt(e.target.value) : undefined,
+                    })
+                  }
                   className="glass-panel border-white/30"
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="emergencyContact">Emergency Contact</Label>
-                <Input
-                  id="emergencyContact"
-                  placeholder="e.g., +92 300 1234567"
-                  value={formData.emergencyContact}
-                  onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="cancellationPolicy">Cancellation Policy</Label>
-                <Textarea
-                  id="cancellationPolicy"
-                  placeholder="e.g., Full refund 14 days prior. 50% refund 7-13 days prior..."
-                  rows={3}
-                  value={formData.cancellationPolicy}
-                  onChange={(e) => setFormData({ ...formData, cancellationPolicy: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="whatToPack">What to Pack</Label>
-                <Textarea
-                  id="whatToPack"
-                  placeholder="e.g., Hiking boots, warm jacket, water bottle..."
-                  rows={3}
-                  value={formData.whatToPack}
-                  onChange={(e) => setFormData({ ...formData, whatToPack: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
+                {errors.available_seats && <p className="text-sm text-red-500">{errors.available_seats}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to set equal to total seats
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Travel Logistics & PNR */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Travel Logistics & PNR</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Button 
-              type="button" 
-              variant="secondary" 
-              onClick={() => navigate("/agent/resource-inventory")}
-            >
-              Import Flight/Hotel from Inventory
-            </Button>
-            <div className="p-4 glass-panel rounded-lg border-white/30">
-              <p className="text-sm text-muted-foreground">
-                No flights or hotels imported yet. Use the Resource Inventory to add travel logistics to your package.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Image Upload Section */}
-        <Card className="glass-panel border-0">
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl">Trip Images</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <Label htmlFor="images">Upload Images</Label>
-              <Input
-                id="images"
-                type="file"
-                multiple
-                accept="image/*"
-                className="glass-panel border-white/30"
-              />
-              <p className="text-sm text-muted-foreground">Upload multiple images for your trip</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Button type="submit" className="w-full" size="lg">
-          Create Trip
-        </Button>
+        <div className="flex gap-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate("/agent/manage-trips")}
+            disabled={loading}
+            className="flex-1"
+          >
+            Cancel
+          </Button>
+          <Button type="submit" className="flex-1" size="lg" disabled={loading}>
+            {loading ? "Creating Trip..." : "Create Trip"}
+          </Button>
+        </div>
       </form>
     </div>
   );

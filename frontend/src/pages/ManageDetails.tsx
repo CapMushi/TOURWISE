@@ -1,44 +1,162 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getTripById, updateTrip, uploadTripImage } from "@/lib/api";
+import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle, Heart } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function ManageDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   
+  const tripIdNum = id ? parseInt(id, 10) : null;
+  
+  const { data: trip, isLoading, error } = useQuery({
+    queryKey: ["trip", tripIdNum],
+    queryFn: () => getTripById(tripIdNum!),
+    enabled: !!tripIdNum,
+  });
+
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
   // Pre-populated with existing trip data
   const [formData, setFormData] = useState({
-    tripName: "Weekend Mountain Hiking Retreat",
-    tripId: "TWH-24-001",
-    destination: "Naran Valley, Kaghan",
-    tripType: "Adventure, Trekking",
-    duration: "3 Days / 2 Nights",
-    dates: "October 25th - October 27th, 2025",
-    suitability: "Families, Solo Travelers, Couples",
+    tripName: "",
+    tripId: "",
+    destination: "",
+    tripType: "",
+    duration: "",
+    dates: "",
+    suitability: undefined as string | undefined,
     physicalRating: "moderate",
-    basePrice: "$250",
-    inclusions: "Accommodation (Twin-share)\nBreakfast daily, 2 Dinners\nAll listed guided tours\nPark entry fees\nLocal transportation",
-    exclusions: "Meals not listed\nPersonal expenses\nTravel insurance\nTips",
-    transportMode: "Carpooling / Self-Drive",
-    meetingPoint: "Central Plaza, Lahore",
-    departureTime: "Fri 6:00 AM / Sun 8:00 PM",
-    accommodationType: "Guesthouse",
-    accommodationName: "Mountain View Lodge",
-    roomingBasis: "Twin-share basis",
-    mealPlan: "Breakfast & Dinner included",
-    itinerary: "Day 1: Departure at 6 AM, travel to Naran Valley, check-in at guesthouse, evening activity.\nDay 2: Morning hike to Saif-ul-Malook Lake, afternoon sightseeing, group dinner.\nDay 3: Morning leisure, check-out at 12 PM, return travel to Lahore.",
-    minGroupSize: "10",
-    maxGroupSize: "20",
-    bookingDeadline: "October 20, 2025",
-    cancellationPolicy: "Full refund 14 days prior. 50% refund 7-13 days prior. No refund within 7 days.",
-    whatToPack: "Hiking boots, warm jacket, water bottle, sunscreen, camera",
-    emergencyContact: "+92 300 1234567",
+    basePrice: "",
+    inclusions: "",
+    exclusions: "",
+    transportMode: "",
+    meetingPoint: "",
+    departureTime: "",
+    accommodationType: "",
+    accommodationName: "",
+    roomingBasis: "",
+    mealPlan: "",
+    itinerary: "",
+    minGroupSize: "",
+    maxGroupSize: "",
+    bookingDeadline: "",
+    cancellationPolicy: "",
+    whatToPack: "",
+    emergencyContact: "",
   });
+
+  // Ensure suitability is always a valid string for Select component
+  const suitabilityValue = formData.suitability || "any";
+
+  // Populate form when trip data is loaded
+  useEffect(() => {
+    if (trip) {
+      setImagePreview(trip.image_url || null);
+      const departureDate = new Date(trip.departure_time);
+      const arrivalDate = new Date(trip.arrival_time);
+      const durationDays = Math.ceil(
+        (arrivalDate.getTime() - departureDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      setFormData({
+        tripName: `${trip.origin_city} → ${trip.destination_city}`,
+        tripId: trip.trip_id.toString(),
+        destination: `${trip.destination_city}, ${trip.destination_province}`,
+        tripType: trip.transport_type.replace("_", " "),
+        duration: `${durationDays} ${durationDays === 1 ? "Day" : "Days"}`,
+        dates: `${format(departureDate, "MMMM dd")} - ${format(arrivalDate, "MMMM dd, yyyy")}`,
+        suitability: trip.suitability || undefined,
+        physicalRating: "moderate",
+        basePrice: parseFloat(trip.price.toString()).toFixed(2),
+        inclusions: "",
+        exclusions: "",
+        transportMode: trip.transport_type.replace("_", " "),
+        meetingPoint: trip.origin_city,
+        departureTime: `${format(departureDate, "PPp")} - ${format(arrivalDate, "PPp")}`,
+        accommodationType: "",
+        accommodationName: "",
+        roomingBasis: "",
+        mealPlan: "",
+        itinerary: "",
+        minGroupSize: "",
+        maxGroupSize: trip.total_seats.toString(),
+        bookingDeadline: "",
+        cancellationPolicy: "",
+        whatToPack: "",
+        emergencyContact: "",
+      });
+    }
+  }, [trip]);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !tripIdNum) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload an image file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "Please upload an image smaller than 5MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      // Upload to Supabase Storage
+      const imageUrl = await uploadTripImage(file, tripIdNum);
+      
+      // Update trip with image URL
+      await updateTrip(tripIdNum, { image_url: imageUrl });
+      
+      // Update local state
+      setImagePreview(imageUrl);
+      
+      // Refresh trip data
+      queryClient.invalidateQueries({ queryKey: ["trip", tripIdNum] });
+      queryClient.invalidateQueries({ queryKey: ["my-trips"] });
+      
+      toast({
+        title: "Image uploaded successfully",
+        description: "The trip image has been updated",
+      });
+    } catch (error) {
+      console.error("Error uploading image:", error);
+      toast({
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "Failed to upload image. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,10 +164,32 @@ export default function ManageDetails() {
     navigate("/agent/manage-trips");
   };
 
+  if (isLoading) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <Skeleton className="h-12 w-64 mb-8" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (error || !trip) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {error instanceof Error ? error.message : "Trip not found"}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <h1 className="text-4xl font-heading font-bold text-heading mb-8">
-        Manage Details: {formData.tripName}
+        Manage Details: {formData.tripName || `${trip.origin_city} → ${trip.destination_city}`}
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-8">
@@ -115,15 +255,6 @@ export default function ManageDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="suitability">Suitability</Label>
-                <Input
-                  id="suitability"
-                  value={formData.suitability}
-                  onChange={(e) => setFormData({ ...formData, suitability: e.target.value })}
-                  className="glass-panel border-white/30"
-                />
-              </div>
-              <div className="space-y-2">
                 <Label htmlFor="physicalRating">Physical Rating</Label>
                 <Select value={formData.physicalRating} onValueChange={(value) => setFormData({ ...formData, physicalRating: value })}>
                   <SelectTrigger className="glass-panel border-white/30">
@@ -137,6 +268,26 @@ export default function ManageDetails() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="suitability" className="flex items-center gap-2">
+                  <Heart className="h-4 w-4" />
+                  Suitability
+                </Label>
+                <Select 
+                  value={suitabilityValue} 
+                  onValueChange={(value) => setFormData({ ...formData, suitability: value === "any" ? undefined : value })}
+                >
+                  <SelectTrigger className="glass-panel border-white/30">
+                    <SelectValue placeholder="Select suitability" />
+                  </SelectTrigger>
+                  <SelectContent className="glass-panel border-white/30 bg-white/95 backdrop-blur-glass z-50">
+                    <SelectItem value="any">Any</SelectItem>
+                    <SelectItem value="Solo Travelers">Solo Travelers</SelectItem>
+                    <SelectItem value="Families">Families</SelectItem>
+                    <SelectItem value="Couples">Couples</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -147,15 +298,21 @@ export default function ManageDetails() {
             <CardTitle className="font-heading text-2xl">Pricing and Inclusions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="basePrice">Base Price (per person)</Label>
-              <Input
-                id="basePrice"
-                value={formData.basePrice}
-                onChange={(e) => setFormData({ ...formData, basePrice: e.target.value })}
-                className="glass-panel border-white/30"
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="basePrice">Base Price (per person)</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <Input
+                    id="basePrice"
+                    type="number"
+                    value={formData.basePrice}
+                    onChange={(e) => setFormData({ ...formData, basePrice: e.target.value })}
+                    className="glass-panel border-white/30 pl-7"
+                    step="0.01"
+                    min="0"
+                  />
+                </div>
+              </div>
             <div className="space-y-2">
               <Label htmlFor="inclusions">Inclusions (one per line)</Label>
               <Textarea
@@ -301,14 +458,18 @@ export default function ManageDetails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="maxGroupSize">Max Group Size</Label>
+                <Label htmlFor="maxGroupSize">Max Group Size (Total Seats)</Label>
                 <Input
                   id="maxGroupSize"
                   type="number"
                   value={formData.maxGroupSize}
                   onChange={(e) => setFormData({ ...formData, maxGroupSize: e.target.value })}
                   className="glass-panel border-white/30"
+                  min="1"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Current: {trip.total_seats} total seats, {trip.available_seats} available
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="bookingDeadline">Booking Deadline</Label>
@@ -384,19 +545,36 @@ export default function ManageDetails() {
         {/* Image Upload Section */}
         <Card className="glass-panel border-0">
           <CardHeader>
-            <CardTitle className="font-heading text-2xl">Trip Images</CardTitle>
+            <CardTitle className="font-heading text-2xl">Trip Image</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              <Label htmlFor="images">Upload New Images</Label>
-              <Input
-                id="images"
-                type="file"
-                multiple
-                accept="image/*"
-                className="glass-panel border-white/30"
-              />
-              <p className="text-sm text-muted-foreground">Upload new images to replace existing ones</p>
+            <div className="space-y-4">
+              {imagePreview && (
+                <div className="relative w-full h-64 rounded-lg overflow-hidden border-2 border-primary/30">
+                  <img 
+                    src={imagePreview} 
+                    alt="Trip preview" 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="images">Upload Trip Image</Label>
+                <Input
+                  id="images"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  disabled={isUploading}
+                  className="glass-panel border-white/30"
+                />
+                {isUploading && (
+                  <p className="text-sm text-muted-foreground">Uploading image...</p>
+                )}
+                <p className="text-sm text-muted-foreground">
+                  Upload an image to display on trip cards and details page (max 5MB)
+                </p>
+              </div>
             </div>
           </CardContent>
         </Card>

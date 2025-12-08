@@ -7,6 +7,7 @@ import { AppLayout } from "./components/layout/AppLayout";
 import Login from "./pages/Login";
 import TravelerHome from "./pages/TravelerHome";
 import MyTrips from "./pages/MyTrips";
+import MyBookings from "./pages/MyBookings";
 import Profile from "./pages/Profile";
 import AgentDashboard from "./pages/AgentDashboard";
 import TripDetails from "./pages/TripDetails";
@@ -30,7 +31,9 @@ import AgentProfileDetail from "./pages/AgentProfileDetail";
 import ModerationQueue from "./pages/ModerationQueue";
 import AdminSettings from "./pages/AdminSettings";
 import ResourceInventory from "./pages/ResourceInventory";
+import SearchResults from "./pages/SearchResults";
 import NotFound from "./pages/NotFound";
+import CollaborationHub from "./pages/CollaborationHub";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
@@ -69,6 +72,16 @@ const App = () => (
               }
             />
             <Route
+              path="/my-bookings"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <MyBookings />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/profile"
               element={
                 <ProtectedRoute>
@@ -99,7 +112,7 @@ const App = () => (
               }
             />
             <Route
-              path="/booking/:tripId"
+              path="/booking/:id"
               element={
                 <ProtectedRoute>
                   <AppLayout userRole="traveler">
@@ -113,7 +126,7 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AppLayout userRole="traveler">
-                    <div className="p-8">Search Results (Coming Soon)</div>
+                    <SearchResults />
                   </AppLayout>
                 </ProtectedRoute>
               }
@@ -183,7 +196,7 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AppLayout userRole="agent">
-                    <div className="p-8">Collaboration Hub (Coming Soon)</div>
+                    <CollaborationHub />
                   </AppLayout>
                 </ProtectedRoute>
               }
