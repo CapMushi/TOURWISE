@@ -1,24 +1,34 @@
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getTripById } from "@/lib/api";
+import { addFavorite, getFavoriteStatus, getTripById, removeFavorite } from "@/lib/api";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Check, X, MapPin, Calendar, Users, DollarSign } from "lucide-react";
+import { AlertCircle, Check, X, MapPin, Calendar, Users, DollarSign, Heart } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
+import { useToast } from "@/hooks/use-toast";
 
 export default function TripDetails() {
   const navigate = useNavigate();
   const { tripId } = useParams();
+  const { toast } = useToast();
+  const [selectedImage, setSelectedImage] = useState(0);
   
   const tripIdNum = tripId ? parseInt(tripId, 10) : null;
   
   const { data: trip, isLoading, error } = useQuery({
     queryKey: ["trip", tripIdNum],
     queryFn: () => getTripById(tripIdNum!),
+    enabled: !!tripIdNum,
+  });
+
+  const { data: favoriteStatus, refetch: refetchFavoriteStatus } = useQuery({
+    queryKey: ["favorite-status", tripIdNum],
+    queryFn: () => getFavoriteStatus(tripIdNum!),
     enabled: !!tripIdNum,
   });
 
@@ -48,20 +58,61 @@ export default function TripDetails() {
 
   const departureDate = new Date(trip.departure_time);
   const arrivalDate = new Date(trip.arrival_time);
+  const gallery = (trip.image_gallery && trip.image_gallery.length > 0)
+    ? trip.image_gallery
+    : [trip.image_url || heroImage];
+  const heroSrc = gallery[selectedImage] || gallery[0] || heroImage;
   const durationDays = Math.ceil(
     (arrivalDate.getTime() - departureDate.getTime()) / (1000 * 60 * 60 * 24)
   );
+
+  const handleFavoriteToggle = async () => {
+    if (!tripIdNum) return;
+    try {
+      if (favoriteStatus?.is_favorited) {
+        await removeFavorite(tripIdNum);
+        toast({ title: "Removed from wishlist" });
+      } else {
+        await addFavorite(tripIdNum);
+        toast({ title: "Added to wishlist" });
+      }
+      await refetchFavoriteStatus();
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Failed to update wishlist",
+        description: err instanceof Error ? err.message : "Please try again.",
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
       {/* Image Gallery */}
       <div className="w-full h-[400px] overflow-hidden">
         <img 
-          src={trip.image_url || heroImage} 
+          src={heroSrc}
           alt={`${trip.origin_city} to ${trip.destination_city}`}
           className="w-full h-full object-cover"
         />
       </div>
+      {gallery.length > 1 && (
+        <div className="max-w-7xl mx-auto px-6 pt-4">
+          <div className="flex gap-3 overflow-x-auto">
+            {gallery.map((img, idx) => (
+              <button
+                key={`${img}-${idx}`}
+                onClick={() => setSelectedImage(idx)}
+                className={`h-20 w-28 rounded-md overflow-hidden border-2 shrink-0 ${
+                  selectedImage === idx ? "border-primary" : "border-transparent"
+                }`}
+              >
+                <img src={img} alt={`Trip image ${idx + 1}`} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Two Column Layout */}
       <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -382,8 +433,9 @@ export default function TripDetails() {
                   {trip.available_seats === 0 ? "Fully Booked" : "Book Now"}
                 </Button>
 
-                <Button variant="secondary" className="w-full">
-                  Add to Wishlist
+                <Button variant="secondary" className="w-full" onClick={handleFavoriteToggle}>
+                  <Heart className={`h-4 w-4 mr-2 ${favoriteStatus?.is_favorited ? "fill-current" : ""}`} />
+                  {favoriteStatus?.is_favorited ? "Remove from Wishlist" : "Add to Wishlist"}
                 </Button>
               </CardContent>
             </Card>

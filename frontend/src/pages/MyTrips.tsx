@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Calendar, User, MapPin } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { getMyFavorites } from "@/lib/api";
 
 interface Trip {
   id: string;
@@ -40,7 +43,6 @@ const upcomingTrips: Trip[] = [
 ];
 
 const pastTrips: Trip[] = [];
-const wishlist: Trip[] = [];
 
 function TripCard({ trip }: { trip: Trip }) {
   return (
@@ -92,6 +94,29 @@ function EmptyState({ message, buttonText }: { message: string; buttonText: stri
 
 export default function MyTrips() {
   const [activeTab, setActiveTab] = useState("upcoming");
+  const navigate = useNavigate();
+  const { data: favorites = [] } = useQuery({
+    queryKey: ["my-favorites"],
+    queryFn: getMyFavorites,
+  });
+  const favoriteTripCards = favorites
+    .filter((item) => item.trip)
+    .map((item) => {
+      const trip = item.trip!;
+      return (
+        <TripCard
+          key={item.favorite_id}
+          trip={{
+            id: String(trip.trip_id),
+            image: trip.image_url || "/placeholder.svg",
+            title: `${trip.origin_city} to ${trip.destination_city}`,
+            destination: `${trip.destination_city}, ${trip.destination_province}`,
+            dates: `${new Date(trip.departure_time).toLocaleDateString()} - ${new Date(trip.arrival_time).toLocaleDateString()}`,
+            agent: trip.agent_name || "Travel Agent",
+          }}
+        />
+      );
+    });
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -129,14 +154,17 @@ export default function MyTrips() {
         </TabsContent>
 
         <TabsContent value="wishlist">
-          {wishlist.length > 0 ? (
+          {favorites.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {wishlist.map((trip) => (
-                <TripCard key={trip.id} trip={trip} />
-              ))}
+              {favoriteTripCards}
             </div>
           ) : (
             <EmptyState message="Your wishlist is empty!" buttonText="Explore Trips" />
+          )}
+          {favorites.length > 0 && (
+            <div className="mt-6 flex justify-end">
+              <Button onClick={() => navigate("/search")}>Explore More Trips</Button>
+            </div>
           )}
         </TabsContent>
       </Tabs>

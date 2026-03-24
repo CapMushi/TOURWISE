@@ -24,6 +24,31 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `recommendation` - User reviews/recommendations for trips
 - `bus_pooling_requests` - Bus pooling requests between travel agents
 - `agent_messages` - Messages between travel agents
+- `favorites` - User wishlist/favorites for trips
+- `notification_preferences` - User-level notification channel and category settings
+- `trip_images` - Multi-image gallery for trips
+- `trip_categories`, `trip_tags` - Classification metadata for trips
+- `trip_category_map`, `trip_tag_map` - Trip-to-category/tag mappings
+- `trip_amenities`, `trip_amenity_map` - Amenity metadata and trip mappings
+- `agent_specializations`, `travel_agent_specialization_map` - Agent specialization metadata and mappings
+- `booking_change_history` - Immutable booking change/audit events
+- `cancellation_policies`, `trip_cancellation_policy_map` - Cancellation policy definitions and per-trip overrides
+- `admin_roles`, `user_admin_roles` - Admin authorization model
+- `audit_logs` - System-wide auditable event log
+- `waitlist_entries` - Waitlist lifecycle for full trips
+- `promotions`, `promotion_trip_map`, `promotion_category_map`, `promotion_agent_map` - Promo definitions and targeting
+- `promotion_redemptions` - Applied promo records by booking/user
+- `group_discount_rules` - Group-seat discount configuration
+- `trip_availability_rules`, `trip_blackout_dates` - Calendar rules and date-specific overrides
+- `traveler_agent_conversations`, `traveler_agent_messages` - Traveler-to-agent messaging
+- `commission_rules`, `commission_trip_map`, `commission_category_map`, `commission_agent_map`, `commission_ledger` - Commission policy and accounting
+
+### Source of Truth Policy
+
+- `database-schema.mdc` is the canonical schema reference for this repository.
+- Use this file as the primary source for table names, columns, relationships, and enum semantics.
+- ERD screenshots are useful visual references, but may omit fields due to zoom/layout limits.
+- If screenshot, code, and docs differ, reconcile by preserving the superset of valid information in this file.
 
 ---
 
@@ -59,7 +84,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
 - `name` (text) - Agent's business/display name
 - `email` (text) - Agent's contact email
-- `verification_status` (verification_status_enum) - Agent verification status (e.g., 'pending', 'verified', 'rejected')
+- `verification_status` (verification_status_enum) - Agent verification status (commonly: 'pending', 'approved', 'active', 'rejected', 'verified')
 - `contact_info` (jsonb) - Agent contact details (phone, address, etc.)
 - `profile_details` (jsonb) - Additional agent-specific profile data
 - `created_at` (timestamptz) - Account creation timestamp
@@ -75,6 +100,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - To check if user is agent: query `travel_agent` table where `user_id = profiles.id`
 - Default `verification_status` is typically 'pending' for new agents
 - `rating` and `numberofreviews` are used for displaying top rated agents
+- `name` is the canonical agent display-name column; `agent_name` is not a physical column in this table
 
 ---
 
@@ -122,6 +148,10 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `created_at` (timestamptz) - Trip creation timestamp
 - `suitability` (suitability_enum) - Suitability for different traveler types (e.g., 'Solo Travelers', 'Families', 'Couples')
 - `image_url` (text) - URL to the trip's main image
+- `origin_lat` (numeric(9,6), nullable) - Optional origin latitude (-90 to 90)
+- `origin_lng` (numeric(9,6), nullable) - Optional origin longitude (-180 to 180)
+- `destination_lat` (numeric(9,6), nullable) - Optional destination latitude (-90 to 90)
+- `destination_lng` (numeric(9,6), nullable) - Optional destination longitude (-180 to 180)
 
 **Relationships:**
 - `agent_id` → `travel_agent.agent_id` (many-to-one)
@@ -131,9 +161,12 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - Each trip belongs to one agent
 - `transport_type` enum categorizes the transportation method
 - `suitability` enum indicates which traveler types the trip is suitable for
+- Backend currently treats `suitability` as required (NOT NULL assumption)
+- If `suitability` is omitted or passed as `Any`, backend writes `Solo Travelers` as the application default
 - Seat availability is tracked with `total_seats` and `available_seats`
 - Trips have specific location fields (`origin_city`, `destination_city`, `destination_province`) for filtering and search
 - `image_url` stores the URL to the trip's main image (typically stored in Supabase Storage)
+- Coordinates support map/radius and geospatial-style filtering use cases
 
 ---
 
@@ -315,6 +348,8 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - Agents cannot create pooling requests with themselves
 - Trips must match: same origin_city, destination_city, same date (any time), same suitability
 - Status workflow: pending → approved/rejected → active → completed
+- Current backend API handlers create/update statuses: `pending`, `approved`, `rejected`, `cancelled`
+- `active` and `completed` are enum-valid but not currently transitioned by exposed handlers in `backend/app/api/collaboration.py`
 - `seat_management` determines if seats are combined or managed separately
 - `selected_bus_agent_id` indicates which agent's bus will be used (set during approval)
 
@@ -346,6 +381,254 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 
 ---
 
+## Table: `favorites`
+
+**Purpose:** Stores user wishlist/favorite trips.
+
+**Columns:**
+- `favorite_id` (int8, PRIMARY KEY) - Auto-incrementing favorite identifier
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id`
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
+- `created_at` (timestamptz) - Favorite creation timestamp
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- `trip_id` → `trips.trip_id` (many-to-one)
+
+**Key Notes:**
+- Unique constraint on (`user_id`, `trip_id`) prevents duplicate favorites
+
+---
+
+## Table: `notification_preferences`
+
+**Purpose:** Stores user notification category and channel preferences.
+
+**Columns:**
+- `user_id` (uuid, PRIMARY KEY, FOREIGN KEY) - References `profiles.id`
+- `booking_updates` (boolean) - Booking-related notifications enabled
+- `payment_updates` (boolean) - Payment-related notifications enabled
+- `trip_reminders` (boolean) - Trip reminder notifications enabled
+- `promotions` (boolean) - Promotional notifications enabled
+- `agent_messages` (boolean) - Agent/traveler message notifications enabled
+- `in_app_enabled` (boolean) - In-app delivery channel enabled
+- `email_enabled` (boolean) - Email delivery channel enabled
+- `sms_enabled` (boolean) - SMS delivery channel enabled
+- `push_enabled` (boolean) - Push delivery channel enabled
+- `quiet_hours_start` (time, nullable) - Quiet-hours start time
+- `quiet_hours_end` (time, nullable) - Quiet-hours end time
+- `timezone` (text) - User timezone (default `UTC`)
+- `created_at` (timestamptz) - Record creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
+
+**Relationships:**
+- `user_id` → `profiles.id` (one-to-one)
+
+---
+
+## Table: `trip_images`
+
+**Purpose:** Supports multi-image galleries per trip.
+
+**Columns:**
+- `image_id` (int8, PRIMARY KEY) - Auto-incrementing image identifier
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
+- `image_url` (text) - Image URL/path
+- `alt_text` (text, nullable) - Accessibility/SEO image alt text
+- `sort_order` (int4) - Display ordering index
+- `is_cover` (boolean) - Whether this is the cover image
+- `created_by` (uuid, nullable, FOREIGN KEY) - References `profiles.id`
+- `created_at` (timestamptz) - Image creation timestamp
+
+**Relationships:**
+- `trip_id` → `trips.trip_id` (many-to-one)
+- `created_by` → `profiles.id` (many-to-one, nullable)
+
+**Key Notes:**
+- Partial unique index enforces at most one `is_cover = true` image per trip
+
+---
+
+## Table Group: Trip Classification and Amenities
+
+**Purpose:** Normalized metadata for trip categorization, tags, and amenities.
+
+**Tables and Columns:**
+- `trip_categories`: `category_id`, `name`, `slug`, `created_at`
+- `trip_tags`: `tag_id`, `name`, `slug`, `created_at`
+- `trip_category_map`: `trip_id`, `category_id`, `created_at` (composite PK)
+- `trip_tag_map`: `trip_id`, `tag_id`, `created_at` (composite PK)
+- `trip_amenities`: `amenity_id`, `name`, `slug`, `created_at`
+- `trip_amenity_map`: `trip_id`, `amenity_id`, `created_at` (composite PK)
+
+**Relationships:**
+- Mapping tables connect `trips` to categories/tags/amenities (many-to-many)
+
+---
+
+## Table Group: Agent Specializations
+
+**Purpose:** Normalized specialization taxonomy for travel agents.
+
+**Tables and Columns:**
+- `agent_specializations`: `specialization_id`, `name`, `slug`, `created_at`
+- `travel_agent_specialization_map`: `agent_id`, `specialization_id`, `created_at` (composite PK)
+
+**Relationships:**
+- `agent_id` → `travel_agent.agent_id`
+- `specialization_id` → `agent_specializations.specialization_id`
+
+---
+
+## Table: `booking_change_history`
+
+**Purpose:** Immutable booking modification/audit history.
+
+**Columns:**
+- `change_id` (int8, PRIMARY KEY) - Auto-incrementing change event ID
+- `booking_id` (int8, FOREIGN KEY) - References `booking.booking_id`
+- `changed_by` (uuid, nullable, FOREIGN KEY) - References `profiles.id`
+- `change_type` (text) - Event type (e.g., `create`, `cancel`, `status_update`)
+- `previous_data` (jsonb, nullable) - Pre-change snapshot
+- `new_data` (jsonb, nullable) - Post-change snapshot
+- `reason` (text, nullable) - Change reason
+- `created_at` (timestamptz) - Event timestamp
+
+---
+
+## Table Group: Cancellation Policies
+
+**Purpose:** Configurable cancellation rules, globally and per trip.
+
+**Tables and Columns:**
+- `cancellation_policies`: `policy_id`, `policy_name`, `description`, `free_cancellation_until_hours`, `cancellation_fee_percent`, `no_show_fee_percent`, `active`, `created_at`, `updated_at`
+- `trip_cancellation_policy_map`: `trip_id` (PK), `policy_id`, `created_at`, `updated_at`
+
+**Relationships:**
+- `trip_cancellation_policy_map.trip_id` → `trips.trip_id` (one-to-one override per trip)
+- `trip_cancellation_policy_map.policy_id` → `cancellation_policies.policy_id`
+
+---
+
+## Table Group: Admin Roles and Audit
+
+**Purpose:** Explicit admin role assignment and auditable operational events.
+
+**Tables and Columns:**
+- `admin_roles`: `role_id`, `role_name`, `description`, `created_at`
+- `user_admin_roles`: `user_id`, `role_id`, `assigned_by`, `assigned_at` (composite PK)
+- `audit_logs`: `audit_id`, `actor_user_id`, `actor_agent_id`, `entity_type`, `entity_id`, `action`, `metadata`, `ip_address`, `user_agent`, `created_at`
+
+**Relationships:**
+- `user_admin_roles.user_id` → `profiles.id`
+- `user_admin_roles.role_id` → `admin_roles.role_id`
+- `audit_logs.actor_user_id` → `profiles.id` (nullable)
+- `audit_logs.actor_agent_id` → `travel_agent.agent_id` (nullable)
+
+---
+
+## Table: `waitlist_entries`
+
+**Purpose:** Waitlist queue and lifecycle for trips with limited seat availability.
+
+**Columns:**
+- `waitlist_id` (int8, PRIMARY KEY) - Auto-incrementing waitlist ID
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id`
+- `requested_seats` (int4) - Requested seats when waitlisted
+- `status` (waitlist_status_enum) - `waiting`, `notified`, `accepted`, `expired`, `cancelled`
+- `priority_score` (int4) - Queue prioritization score
+- `notified_at` (timestamptz, nullable) - When user was notified
+- `expires_at` (timestamptz, nullable) - Offer expiration timestamp
+- `notes` (text, nullable) - Operational note
+- `created_at` (timestamptz) - Creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
+
+**Key Notes:**
+- Unique (`trip_id`, `user_id`) to avoid duplicate active entries per user/trip
+
+---
+
+## Table Group: Promotions and Redemptions
+
+**Purpose:** Promo engine for global/targeted discounts with redemption tracking.
+
+**Tables and Columns:**
+- `promotions`: `promotion_id`, `code`, `name`, `description`, `promo_type`, `scope`, `status`, `discount_value`, `max_discount_amount`, `min_booking_amount`, `usage_limit_total`, `usage_limit_per_user`, `starts_at`, `ends_at`, `combinable`, `created_by`, `created_at`, `updated_at`
+- `promotion_trip_map`: `promotion_id`, `trip_id`, `created_at` (composite PK)
+- `promotion_category_map`: `promotion_id`, `category_id`, `created_at` (composite PK)
+- `promotion_agent_map`: `promotion_id`, `agent_id`, `created_at` (composite PK)
+- `promotion_redemptions`: `redemption_id`, `promotion_id`, `booking_id`, `user_id`, `code`, `discount_applied`, `redeemed_at`, `metadata`
+
+**Relationships:**
+- Mapping tables target promotions by trip/category/agent
+- `promotion_redemptions` links promotion usage to booking and user
+
+---
+
+## Table: `group_discount_rules`
+
+**Purpose:** Group-size discounting logic, globally or per trip.
+
+**Columns:**
+- `rule_id` (int8, PRIMARY KEY) - Auto-incrementing rule ID
+- `trip_id` (int8, nullable, FOREIGN KEY) - Null means global rule
+- `min_seats` (int4) - Minimum seats threshold
+- `max_seats` (int4, nullable) - Optional upper bound
+- `discount_type` (promo_type_enum) - `percentage` or `fixed_amount`
+- `discount_value` (numeric) - Discount amount
+- `active` (boolean) - Rule active flag
+- `starts_at` (timestamptz, nullable) - Rule effective start
+- `ends_at` (timestamptz, nullable) - Rule effective end
+- `created_by` (uuid, nullable, FOREIGN KEY) - References `profiles.id`
+- `created_at` (timestamptz) - Creation timestamp
+- `updated_at` (timestamptz) - Last update timestamp
+
+---
+
+## Table Group: Trip Availability Calendar
+
+**Purpose:** Availability recurrence plus date-level overrides/blackouts.
+
+**Tables and Columns:**
+- `trip_availability_rules`: `rule_id`, `trip_id`, `day_of_week` (0-6), `start_time`, `end_time`, `is_available`, `valid_from`, `valid_to`, `seat_override`, `created_at`, `updated_at`
+- `trip_blackout_dates`: `blackout_id`, `trip_id`, `target_date`, `is_available`, `seat_override`, `reason`, `created_at`
+
+**Key Notes:**
+- `trip_blackout_dates` has unique (`trip_id`, `target_date`) to prevent duplicate exceptions
+
+---
+
+## Table Group: Traveler-Agent Messaging
+
+**Purpose:** Direct messaging between travelers and agents, scoped optionally to booking/trip.
+
+**Tables and Columns:**
+- `traveler_agent_conversations`: `conversation_id`, `traveler_user_id`, `agent_id`, `booking_id`, `trip_id`, `subject`, `is_closed`, `closed_at`, `created_at`, `updated_at`
+- `traveler_agent_messages`: `message_id`, `conversation_id`, `sender_user_id`, `sender_agent_id`, `message_text`, `message_status`, `read_at`, `created_at`
+
+**Relationships:**
+- Conversation links traveler profile and travel agent
+- Messages link to conversation; sender is either user or agent (exclusive sender columns)
+
+---
+
+## Table Group: Commissions
+
+**Purpose:** Commission policy definition and booking-level commission accounting.
+
+**Tables and Columns:**
+- `commission_rules`: `rule_id`, `name`, `scope`, `commission_percent`, `fixed_fee`, `active`, `starts_at`, `ends_at`, `created_at`, `updated_at`
+- `commission_trip_map`: `rule_id`, `trip_id`, `created_at` (composite PK)
+- `commission_category_map`: `rule_id`, `category_id`, `created_at` (composite PK)
+- `commission_agent_map`: `rule_id`, `agent_id`, `created_at` (composite PK)
+- `commission_ledger`: `ledger_id`, `booking_id`, `trip_id`, `agent_id`, `rule_id`, `gross_amount`, `commission_amount`, `net_amount`, `status`, `recognized_at`, `settled_at`, `reversed_at`, `note`, `created_at`, `updated_at`
+
+**Key Notes:**
+- `commission_ledger` enforces `gross_amount = commission_amount + net_amount`
+
+---
+
 ## Common Patterns & Best Practices
 
 ### User Identification
@@ -370,18 +653,33 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `trip_id` references `trips.trip_id`
 - `itinerary_id` references `itinerary.itinerary_id`
 - `booking_id` references `booking.booking_id` (in `booking_passengers`, `payments`, `booking_notifications`)
+- New mapping tables introduce normalized many-to-many links (trip/category/tag/amenity, agent/specialization, promotion scope, commission scope)
 
 ### Enum Types
 - `itinerary_status_enum` - Itinerary statuses
 - `booking_status_enum` - Booking statuses
 - `service_type_enum` - Transportation/service categories (used in `trips.transport_type`)
-- `verification_status_enum` - Agent verification statuses
+- `verification_status_enum` - Agent verification statuses (commonly includes 'pending', 'approved', 'active', 'rejected', 'verified')
 - `suitability_enum` - Suitability categories (used in `trips.suitability`, e.g., 'Solo Travelers', 'Families', 'Couples')
 - `pooling_status_enum` - Bus pooling request statuses: 'pending', 'approved', 'rejected', 'active', 'completed', 'cancelled'
+- `waitlist_status_enum` - Waitlist lifecycle statuses: 'waiting', 'notified', 'accepted', 'expired', 'cancelled'
+- `promo_type_enum` - Discount types: 'percentage', 'fixed_amount'
+- `promo_scope_enum` - Rule/promo scope: 'global', 'trip', 'category', 'agent'
+- `promo_status_enum` - Promotion status: 'active', 'inactive', 'expired'
+- `traveler_agent_message_status_enum` - Message delivery/read status: 'sent', 'delivered', 'read'
+- `commission_status_enum` - Commission lifecycle: 'pending', 'recognized', 'settled', 'reversed'
+
+### Runtime literals currently observed in API
+- `travel_agent.verification_status`: `pending`, `approved`
+- `booking.status`: `confirmed`, `cancelled` (plus passthrough filtering in list endpoint)
+- `payments.payment_status`: `completed`, `refunded`
+- `bus_pooling_requests.status`: `pending`, `approved`, `rejected`, `cancelled`
+- `bus_pooling_requests.seat_management`: `combined`, `separate`
+- `booking_notifications.notification_type`: `booking_confirmed`, `cancellation`
 
 ### Timestamps
 - Use `created_at` for creation timestamps
-- Use `updated_at` for last modification (in `profiles`, `itinerary`, `booking`, `payments`, `bus_pooling_requests`)
+- Use `updated_at` for last modification (core + new policy/config tables, waitlist, conversations, commission ledger)
 - All timestamps are `timestamptz` (timezone-aware)
 - Special timestamps: `confirmed_at`, `cancelled_at`, `payment_date`, `refunded_at` track specific events
 
@@ -447,6 +745,28 @@ recommendations = supabase.table("recommendation")\
     .eq("trip_id", trip_id)\
     .execute()
 ```
+
+---
+
+## ERD Screenshot Cross-Check
+
+The provided ERD screenshot aligns with the table set documented in this file:
+- `profiles`
+- `travel_agent`
+- `itinerary`
+- `trips`
+- `booking`
+- `booking_passengers`
+- `payments`
+- `booking_notifications`
+- `recommendation`
+- `bus_pooling_requests`
+- `agent_messages`
+- `auth.users` linkage via `profiles.id`
+
+Cross-check result:
+- All core entities from the screenshot are represented here.
+- This document intentionally keeps additional schema details that may not be visible in the screenshot layout (for example `trips.image_url` and `itinerary.updated_at`) to avoid information loss.
 
 ---
 

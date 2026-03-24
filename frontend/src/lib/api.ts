@@ -45,6 +45,7 @@ export interface TripResponse {
   agent_name?: string;
   image_url?: string;
   suitability?: string;
+  image_gallery?: string[];
 }
 
 // API Error Response
@@ -253,6 +254,36 @@ export async function getTripById(tripId: number): Promise<TripResponse> {
   });
 }
 
+export interface TripImageResponse {
+  image_id: number;
+  trip_id: number;
+  image_url: string;
+  alt_text?: string;
+  sort_order: number;
+  is_cover: boolean;
+  created_at: string;
+}
+
+export interface CreateTripImageRequest {
+  image_url: string;
+  alt_text?: string;
+  sort_order?: number;
+  is_cover?: boolean;
+}
+
+export async function getTripImages(tripId: number): Promise<TripImageResponse[]> {
+  return apiClient<TripImageResponse[]>(`/api/trips/${tripId}/images`, {
+    method: "GET",
+  });
+}
+
+export async function createTripImage(tripId: number, data: CreateTripImageRequest): Promise<TripImageResponse> {
+  return apiClient<TripImageResponse>(`/api/trips/${tripId}/images`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 /**
  * Update trip details
  */
@@ -264,6 +295,67 @@ export async function updateTrip(tripId: number, data: UpdateTripRequest): Promi
   return apiClient<TripResponse>(`/api/trips/${tripId}`, {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+export interface FavoriteStatusResponse {
+  trip_id: number;
+  is_favorited: boolean;
+}
+
+export interface FavoriteTripItem {
+  favorite_id: number;
+  trip_id: number;
+  created_at: string;
+  trip?: TripResponse;
+}
+
+export async function getMyFavorites(): Promise<FavoriteTripItem[]> {
+  return apiClient<FavoriteTripItem[]>("/api/favorites", { method: "GET" });
+}
+
+export async function getFavoriteStatus(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}/status`, { method: "GET" });
+}
+
+export async function addFavorite(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}`, { method: "POST" });
+}
+
+export async function removeFavorite(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}`, { method: "DELETE" });
+}
+
+export interface NotificationPreferences {
+  user_id: string;
+  booking_updates: boolean;
+  payment_updates: boolean;
+  trip_reminders: boolean;
+  promotions: boolean;
+  agent_messages: boolean;
+  in_app_enabled: boolean;
+  email_enabled: boolean;
+  sms_enabled: boolean;
+  push_enabled: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  timezone?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type NotificationPreferencesUpdate = Partial<Omit<NotificationPreferences, "user_id" | "created_at" | "updated_at">>;
+
+export async function getNotificationPreferences(): Promise<NotificationPreferences> {
+  return apiClient<NotificationPreferences>("/api/notification-preferences", { method: "GET" });
+}
+
+export async function updateNotificationPreferences(
+  payload: NotificationPreferencesUpdate
+): Promise<NotificationPreferences> {
+  return apiClient<NotificationPreferences>("/api/notification-preferences", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   });
 }
 
