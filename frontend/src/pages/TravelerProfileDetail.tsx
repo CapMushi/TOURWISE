@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ArrowLeft, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { formatPkr } from "@/lib/currency";
 
 const travelerData = {
   name: "John Doe",
@@ -78,8 +79,8 @@ export default function TravelerProfileDetail() {
                 <p className="text-sm text-muted-foreground">Total Bookings</p>
               </div>
               <div className="glass-panel p-4 rounded-lg">
-                <p className="text-2xl font-bold text-accent">$1,850</p>
-                <p className="text-sm text-muted-foreground">Total Spent</p>
+                <p className="text-2xl font-bold text-accent">{formatPkr(518_000)}</p>
+                <p className="text-sm text-muted-foreground">Total spent (PKR)</p>
               </div>
             </div>
             <div className="glass-panel p-4 rounded-lg">

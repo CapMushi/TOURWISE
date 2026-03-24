@@ -174,7 +174,7 @@ async def create_booking(
         payment_data = {
             "booking_id": booking_id,
             "amount": float(total_price),
-            "currency": "USD",
+            "currency": "PKR",
             "payment_method": "card",
             "payment_status": "completed",
             "payment_date": datetime.utcnow().isoformat(),
@@ -459,7 +459,7 @@ async def cancel_booking(
             "user_id": user_id,
             "notification_type": "cancellation",
             "title": "Booking Cancelled",
-            "message": f"Your booking {booking['booking_reference']} has been cancelled. Refund of ${booking['total_price']} will be processed.",
+            "message": f"Your booking {booking['booking_reference']} has been cancelled. Refund of PKR {booking['total_price']} will be processed.",
             "is_read": False,
         }
         supabase.table("booking_notifications").insert(notification_data).execute()

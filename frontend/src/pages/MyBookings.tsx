@@ -14,7 +14,7 @@ import {
   Calendar,
   MapPin,
   Users,
-  DollarSign,
+  Banknote,
   FileText,
   X,
 } from "lucide-react";
@@ -31,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { getMyBookings, cancelBooking, type BookingResponse } from "@/lib/api";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { formatPkr } from "@/lib/currency";
 
 // Safe date formatter
 const formatDate = (dateString: string | undefined | null, formatStr: string = "MMM dd, yyyy HH:mm"): string => {
@@ -250,10 +251,10 @@ export default function MyBookings() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <DollarSign className="h-4 w-4 text-body-text" />
+                    <Banknote className="h-4 w-4 text-body-text" />
                     <div>
                       <p className="text-sm text-body-text">Total Price</p>
-                      <p className="font-medium">${parseFloat(booking.total_price.toString()).toFixed(2)}</p>
+                      <p className="font-medium">{formatPkr(booking.total_price)}</p>
                     </div>
                   </div>
                 </div>
@@ -300,7 +301,7 @@ export default function MyBookings() {
                     <AlertDescription>
                       <strong>Cancelled:</strong> {booking.cancellation_reason}
                       {booking.refund_amount && (
-                        <span className="block mt-1">Refund Amount: ${parseFloat(booking.refund_amount.toString()).toFixed(2)}</span>
+                        <span className="block mt-1">Refund Amount: {formatPkr(booking.refund_amount)}</span>
                       )}
                     </AlertDescription>
                   </Alert>
@@ -344,10 +345,13 @@ export default function MyBookings() {
               <div className="p-4 glass-panel rounded-lg space-y-2">
                 <p className="font-medium">{selectedBooking.trip?.origin_city} → {selectedBooking.trip?.destination_city}</p>
                 <p className="text-sm text-body-text">
-                  Total: ${parseFloat(selectedBooking.total_price.toString()).toFixed(2)} | Seats: {selectedBooking.number_of_seats}
+                  Total: {formatPkr(selectedBooking.total_price)} | Seats: {selectedBooking.number_of_seats}
                 </p>
                 <p className="text-sm text-body-text">
-                  Refund Amount: <span className="font-semibold text-primary">${parseFloat(selectedBooking.total_price.toString()).toFixed(2)}</span>
+                  Refund Amount:{" "}
+                  <span className="font-semibold text-primary">
+                    {formatPkr(selectedBooking.refund_amount ?? selectedBooking.total_price)}
+                  </span>
                 </p>
               </div>
             )}

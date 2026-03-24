@@ -13,7 +13,11 @@ type AuthContextValue = {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signUpWithEmail: (email: string, password: string) => Promise<{ error?: string }>;
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    options?: { username?: string }
+  ) => Promise<{ error?: string }>;
   signInWithEmail: (email: string, password: string) => Promise<{ error?: string }>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -62,8 +66,15 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   const signUpWithEmail = useCallback(
-    async (email: string, password: string) => {
-      const { error } = await supabase.auth.signUp({ email, password });
+    async (email: string, password: string, options?: { username?: string }) => {
+      const username = options?.username?.trim();
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: username
+          ? { data: { username } }
+          : undefined,
+      });
       if (error) {
         console.error("[Auth] signUp error", error);
         return { error: error.message };

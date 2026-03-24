@@ -20,6 +20,7 @@ const travelerItems = [
   { title: "Home", url: "/", icon: Home },
   { title: "My Trips", url: "/my-trips", icon: MapPin },
   { title: "My Bookings", url: "/my-bookings", icon: Calendar },
+  { title: "Notifications", url: "/notifications", icon: Bell },
   { title: "Profile", url: "/profile", icon: User },
 ];
 

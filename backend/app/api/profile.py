@@ -1,0 +1,127 @@
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+
+from app.core.security import get_current_user
+from app.services.supabase_client import get_supabase_client
+
+router = APIRouter()
+
+
+class ProfileResponse(BaseModel):
+    id: str
+    email: Optional[str] = None
+    username: Optional[str] = None
+    preferences: Optional[Dict[str, Any]] = None
+    profile_details: Optional[Dict[str, Any]] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    username: Optional[str] = Field(None, min_length=1, max_length=80)
+    preferences: Optional[Dict[str, Any]] = None
+    profile_details: Optional[Dict[str, Any]] = None
+
+
+def _ensure_profile_row(supabase, user_id: str) -> dict:
+    result = supabase.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+    if result.data:
+        return result.data[0]
+    insert_result = supabase.table("profiles").insert({"id": user_id}).execute()
+    if insert_result.data:
+        return insert_result.data[0]
+    retry = supabase.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+    if retry.data:
+        return retry.data[0]
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Could not load or create profile",
+    )
+
+
+@router.get("", response_model=ProfileResponse)
+async def get_profile(
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    user_id = current_user["id"]
+    email = current_user.get("email")
+
+    try:
+        row = _ensure_profile_row(supabase, user_id)
+        return ProfileResponse(
+            id=user_id,
+            email=email,
+            username=row.get("username"),
+            preferences=row.get("preferences"),
+            profile_details=row.get("profile_details"),
+            updated_at=row.get("updated_at"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching profile: {str(e)}",
+        )
+
+
+@router.patch("", response_model=ProfileResponse)
+async def update_profile(
+    body: ProfileUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    user_id = current_user["id"]
+    email = current_user.get("email")
+
+    update_payload: dict = {}
+    if body.username is not None:
+        update_payload["username"] = body.username.strip()
+    if body.preferences is not None:
+        update_payload["preferences"] = body.preferences
+    if body.profile_details is not None:
+        update_payload["profile_details"] = body.profile_details
+
+    if not update_payload:
+        row = _ensure_profile_row(supabase, user_id)
+        return ProfileResponse(
+            id=user_id,
+            email=email,
+            username=row.get("username"),
+            preferences=row.get("preferences"),
+            profile_details=row.get("profile_details"),
+            updated_at=row.get("updated_at"),
+        )
+
+    try:
+        _ensure_profile_row(supabase, user_id)
+        result = (
+            supabase.table("profiles")
+            .update(update_payload)
+            .eq("id", user_id)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update profile",
+            )
+        row = result.data[0]
+        return ProfileResponse(
+            id=user_id,
+            email=email,
+            username=row.get("username"),
+            preferences=row.get("preferences"),
+            profile_details=row.get("profile_details"),
+            updated_at=row.get("updated_at"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating profile: {str(e)}",
+        )

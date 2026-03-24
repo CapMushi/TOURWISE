@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { formatPkr } from "@/lib/currency";
 
 const agentData = {
   businessName: "TravelCo Adventures",
@@ -11,13 +12,13 @@ const agentData = {
   email: "sarah@travelco.com",
   phone: "+1 (555) 123-4567",
   verificationStatus: "Verified",
-  totalRevenue: "$45,000",
+  totalRevenuePkr: 12_600_000,
   totalTripsHosted: 15,
   averageRating: 4.8,
   activeTrips: [
-    { name: "Mountain Hiking Retreat", price: "$250", status: "Active" },
-    { name: "Coastal Beach Getaway", price: "$180", status: "Active" },
-    { name: "City Food Tour", price: "$95", status: "Draft" },
+    { name: "Mountain Hiking Retreat", pricePkr: 70_000, status: "Active" },
+    { name: "Coastal Beach Getaway", pricePkr: 50_400, status: "Active" },
+    { name: "City Food Tour", pricePkr: 26_600, status: "Draft" },
   ],
 };
 
@@ -73,8 +74,8 @@ export default function AgentProfileDetail() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="glass-panel border-0">
           <CardContent className="pt-6">
-            <p className="text-3xl font-bold text-primary">{agentData.totalRevenue}</p>
-            <p className="text-sm text-muted-foreground mt-1">Total Revenue Generated</p>
+            <p className="text-3xl font-bold text-primary">{formatPkr(agentData.totalRevenuePkr)}</p>
+            <p className="text-sm text-muted-foreground mt-1">Total revenue generated (PKR)</p>
           </CardContent>
         </Card>
         <Card className="glass-panel border-0">
@@ -102,7 +103,9 @@ export default function AgentProfileDetail() {
               <div key={idx} className="glass-panel p-4 rounded-lg flex items-center justify-between">
                 <div>
                   <p className="font-medium">{trip.name}</p>
-                  <p className="text-sm text-muted-foreground">{trip.price} per person</p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatPkr(trip.pricePkr)} per person
+                  </p>
                 </div>
                 <Badge variant={trip.status === "Active" ? "default" : "secondary"}>
                   {trip.status}

@@ -1,6 +1,8 @@
+import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { DollarSign, Calendar, MessageSquare, Plus } from "lucide-react";
+import { Banknote, Calendar, MessageSquare, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { formatPkr } from "@/lib/currency";
 
 const chartData = [
   { month: "Jan", bookings: 12 },
@@ -20,24 +22,25 @@ const recentBookings = [
 ];
 
 export default function AgentDashboard() {
+  const navigate = useNavigate();
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-4xl font-heading font-bold text-heading">Dashboard</h1>
-        <Button className="gap-2">
+        <Button className="gap-2" onClick={() => navigate("/agent/add-trip")}>
           <Plus className="h-4 w-4" />
           Create New Listing
         </Button>
       </div>
 
-      {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="glass-card p-6 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-body-text">Total Revenue</span>
-            <DollarSign className="h-5 w-5 text-primary" />
+            <span className="text-body-text">Total revenue (PKR)</span>
+            <Banknote className="h-5 w-5 text-primary" />
           </div>
-          <div className="text-3xl font-heading font-bold text-heading">$45,280</div>
+          <div className="text-3xl font-heading font-bold text-heading">{formatPkr(12_678_400)}</div>
           <div className="text-sm text-accent">+12% from last month</div>
         </div>
 
@@ -60,7 +63,6 @@ export default function AgentDashboard() {
         </div>
       </div>
 
-      {/* Chart */}
       <div className="glass-card p-6">
         <h2 className="text-2xl font-heading font-semibold text-heading mb-6">Bookings per Month</h2>
         <ResponsiveContainer width="100%" height={300}>
@@ -68,12 +70,12 @@ export default function AgentDashboard() {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis dataKey="month" />
             <YAxis />
-            <Tooltip 
-              contentStyle={{ 
+            <Tooltip
+              contentStyle={{
                 background: "rgba(255, 255, 255, 0.95)",
                 backdropFilter: "blur(10px)",
                 border: "1px solid rgba(255, 255, 255, 0.3)",
-                borderRadius: "8px"
+                borderRadius: "8px",
               }}
             />
             <Bar dataKey="bookings" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
@@ -81,7 +83,6 @@ export default function AgentDashboard() {
         </ResponsiveContainer>
       </div>
 
-      {/* Recent Bookings Table */}
       <div className="glass-card p-6">
         <h2 className="text-2xl font-heading font-semibold text-heading mb-6">5 Most Recent Bookings</h2>
         <div className="overflow-x-auto">
@@ -101,11 +102,15 @@ export default function AgentDashboard() {
                   <td className="py-3 px-4 text-body-text">{booking.customer}</td>
                   <td className="py-3 px-4 text-body-text">{booking.date}</td>
                   <td className="py-3 px-4">
-                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
-                      booking.status === "Confirmed" ? "bg-accent/20 text-accent" :
-                      booking.status === "Pending" ? "bg-secondary/20 text-secondary" :
-                      "bg-muted text-muted-foreground"
-                    }`}>
+                    <span
+                      className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        booking.status === "Confirmed"
+                          ? "bg-accent/20 text-accent"
+                          : booking.status === "Pending"
+                            ? "bg-secondary/20 text-secondary"
+                            : "bg-muted text-muted-foreground"
+                      }`}
+                    >
                       {booking.status}
                     </span>
                   </td>

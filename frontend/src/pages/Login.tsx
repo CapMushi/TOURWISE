@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plane, Shield } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabaseClient";
+import { updateUserProfile } from "@/lib/api";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -18,6 +20,7 @@ export default function Login() {
   const [role, setRole] = useState<"traveler" | "agent">("traveler");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -35,12 +38,24 @@ export default function Login() {
 
     try {
       if (isSignup) {
-        const { error: signupError } = await signUpWithEmail(email, password);
+        const u = username.trim();
+        if (u.length < 2) {
+          setError("Please choose a username (at least 2 characters).");
+          return;
+        }
+        const { error: signupError } = await signUpWithEmail(email, password, { username: u });
         if (signupError) {
           setError(signupError);
           return;
         }
-        // After signup, go to role selection to finish onboarding
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session) {
+          try {
+            await updateUserProfile({ username: u });
+          } catch {
+            // Row may be created on first GET /api/profile if JWT is not ready yet
+          }
+        }
         navigate("/role-selection");
       } else {
         const { error: loginError } = await signInWithEmail(email, password);
@@ -200,8 +215,18 @@ export default function Login() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {isSignup && !isAdminView && (
             <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
-              <Input id="name" type="text" placeholder="John Doe" required />
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="How you'll appear on TourWise"
+                required
+                minLength={2}
+                maxLength={80}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+              />
             </div>
           )}
 

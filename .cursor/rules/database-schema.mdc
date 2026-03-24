@@ -50,6 +50,24 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - ERD screenshots are useful visual references, but may omit fields due to zoom/layout limits.
 - If screenshot, code, and docs differ, reconcile by preserving the superset of valid information in this file.
 
+### Backend API vs. tables (this repository)
+
+FastAPI routers under `backend/app/api/` exercise these Supabase tables today:
+
+| Router | Tables |
+|--------|--------|
+| `auth.py`, `profile.py` | `travel_agent`, `profiles` |
+| `trips.py` | `trips`, `travel_agent` (join), `trip_images` |
+| `bookings.py` | `booking`, `trips`, `booking_passengers`, `payments`, `travel_agent`, `booking_notifications` |
+| `favorites.py` | `favorites`, `trips` |
+| `collaboration.py` | `travel_agent`, `trips`, `bus_pooling_requests`, `agent_messages`, `booking` |
+| `notification_preferences.py` | `notification_preferences` |
+| `notifications.py` | `booking_notifications` |
+
+SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `optional_profiles_trigger.sql`.
+
+**Maintenance:** When adding or changing `supabase.table(...)` usage in `backend/app/api/`, extend `backend/supabase/schema_reference.sql` using its existing comment-block style. When the actual database gains tables, columns, or relationships, update this `database-schema.mdc` file as well.
+
 ---
 
 ## Table: `profiles`
@@ -64,7 +82,8 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `updated_at` (timestamptz) - Last update timestamp
 
 **Relationships:**
-- Referenced by `user_id` in: `itinerary`, `booking`, `travel_agent`, `recommendation`
+- Referenced by `user_id` in: `itinerary`, `booking`, `travel_agent`, `recommendation`, `favorites`, `notification_preferences`
+- Referenced by `id` as `created_by` on `trip_images` (optional; set when the API records the uploading user)
 - One-to-one with `auth.users` (via `id`)
 
 **Key Notes:**
@@ -141,13 +160,13 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `destination_city` (text) - Destination city
 - `departure_time` (timestamptz) - Scheduled departure time
 - `arrival_time` (timestamptz) - Scheduled arrival time
-- `price` (numeric) - Trip price
+- `price` (numeric) - Trip price per person (stored and displayed as PKR in the application)
 - `transport_type` (service_type_enum) - Type of transportation (e.g., 'flight', 'bus', 'train', 'car_rental', 'tour', 'transport')
 - `total_seats` (int4) - Total number of seats available
 - `available_seats` (int4) - Number of seats currently available
 - `created_at` (timestamptz) - Trip creation timestamp
 - `suitability` (suitability_enum) - Suitability for different traveler types (e.g., 'Solo Travelers', 'Families', 'Couples')
-- `image_url` (text) - URL to the trip's main image
+- `image_url` (text, nullable) - Public URL for main trip image (e.g. Supabase Storage); PostgreSQL `comment on column` matches this wording. Apply with `alter table public.trips add column if not exists image_url text;` — see `backend/supabase/add_trips_image_url.sql`. If PostgREST returns `PGRST204` for `image_url`, reload the API schema in the Supabase dashboard after migrating.
 - `origin_lat` (numeric(9,6), nullable) - Optional origin latitude (-90 to 90)
 - `origin_lng` (numeric(9,6), nullable) - Optional origin longitude (-180 to 180)
 - `destination_lat` (numeric(9,6), nullable) - Optional destination latitude (-90 to 90)
@@ -155,7 +174,10 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 
 **Relationships:**
 - `agent_id` → `travel_agent.agent_id` (many-to-one)
-- Referenced by `trip_id` in: `booking`, `recommendation`
+- Referenced by `trip_id` in: `booking`, `recommendation`, `favorites`, `trip_images`, `waitlist_entries`
+- Referenced by `trip_id` in mapping/policy tables: `trip_category_map`, `trip_tag_map`, `trip_amenity_map`, `trip_cancellation_policy_map`, `promotion_trip_map`, `commission_trip_map`, `group_discount_rules` (when not null), `trip_availability_rules`, `trip_blackout_dates`
+- Referenced by `trip_id` in: `traveler_agent_conversations` (optional context), `commission_ledger`
+- Referenced by `requester_trip_id` and `target_trip_id` in: `bus_pooling_requests`
 
 **Key Notes:**
 - Each trip belongs to one agent
@@ -165,7 +187,8 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - If `suitability` is omitted or passed as `Any`, backend writes `Solo Travelers` as the application default
 - Seat availability is tracked with `total_seats` and `available_seats`
 - Trips have specific location fields (`origin_city`, `destination_city`, `destination_province`) for filtering and search
-- `image_url` stores the URL to the trip's main image (typically stored in Supabase Storage)
+- `image_url` stores the public URL of the trip’s primary image (usually from Supabase Storage); optional until an image is uploaded
+- **API alignment:** `PATCH /api/trips/{trip_id}` in this codebase only persists `image_url`. Additional images use `trip_images`; when an image row is created with `is_cover = true`, the backend also writes that URL to `trips.image_url` for backwards compatibility.
 - Coordinates support map/radius and geospatial-style filtering use cases
 
 ---
@@ -183,7 +206,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `status` (booking_status_enum) - Booking status enum (e.g., 'pending', 'confirmed', 'cancelled', 'completed', 'refunded', 'expired')
 - `payment_info` (jsonb) - Payment-related details (legacy field, use `payments` table for detailed payment tracking)
 - `number_of_seats` (int4) - Number of seats booked (must be > 0)
-- `total_price` (numeric) - Total price for the booking (price per seat × number of seats)
+- `total_price` (numeric) - Total price for the booking (trip `price` × `number_of_seats`; same currency as trip price — PKR in the current application)
 - `passenger_names` (text[]) - Array of passenger names (quick reference)
 - `contact_email` (text) - Contact email for the booking
 - `contact_phone` (text) - Contact phone number for the booking
@@ -199,7 +222,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `user_id` → `profiles.id` (many-to-one)
 - `trip_id` → `trips.trip_id` (many-to-one)
 - `itinerary_id` → `itinerary.itinerary_id` (many-to-one, nullable)
-- Referenced by `booking_id` in: `booking_passengers`, `payments`, `booking_notifications`
+- Referenced by `booking_id` in: `booking_passengers`, `payments`, `booking_notifications`, `promotion_redemptions`, `booking_change_history`, `commission_ledger`
 
 **Key Notes:**
 - Bookings link users, trips, and optionally itineraries
@@ -249,7 +272,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `payment_id` (int8, PRIMARY KEY) - Auto-incrementing payment identifier
 - `booking_id` (int8, FOREIGN KEY) - References `booking.booking_id`
 - `amount` (numeric) - Payment amount (must be > 0)
-- `currency` (text) - Currency code (default: 'USD')
+- `currency` (text) - Currency code. **Application behavior:** `backend/app/api/bookings.py` inserts new payment rows with `currency: "PKR"`. A database-level default of `'USD'` may still exist from older migrations; treat stored amounts as PKR when created through the current booking flow.
 - `payment_method` (text) - Payment method ('card', 'bank_transfer', 'cash', 'paypal', etc.)
 - `payment_status` (text) - Payment status ('pending', 'completed', 'failed', 'refunded')
 - `transaction_id` (text, UNIQUE, nullable) - External payment gateway transaction ID
@@ -672,6 +695,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 ### Runtime literals currently observed in API
 - `travel_agent.verification_status`: `pending`, `approved`
 - `booking.status`: `confirmed`, `cancelled` (plus passthrough filtering in list endpoint)
+- `payments.currency`: `PKR` on insert from booking creation in `bookings.py`
 - `payments.payment_status`: `completed`, `refunded`
 - `bus_pooling_requests.status`: `pending`, `approved`, `rejected`, `cancelled`
 - `bus_pooling_requests.seat_management`: `combined`, `separate`

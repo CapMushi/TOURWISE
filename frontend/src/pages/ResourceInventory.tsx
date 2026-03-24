@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,72 +8,128 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { Plane, Hotel } from "lucide-react";
+import { Bus, Hotel } from "lucide-react";
+import { getMyTrips } from "@/lib/api";
+import { addBusesToTrip, addHotelsToTrip } from "@/lib/tripResourcesStorage";
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatPkr } from "@/lib/currency";
 
-// Dummy flight data
-const dummyFlights = [
+const TRIP_RESOURCES_EVENT = "tourwise-trip-resources-changed";
+
+const dummyBuses = [
   {
-    id: "F001",
-    airline: "PIA",
-    flightNumber: "PK701",
-    route: "LHE-DXB-MAN",
+    id: "B001",
+    operator: "Greyhound Lines",
+    serviceNumber: "GH-1842",
+    route: "New York, NY → Philadelphia, PA",
+    departure: "07:30",
+    arrival: "11:45",
+    duration: "4h 15m",
+    stops: 0,
+    seats: 52,
+    price: 11_700,
+    coachClass: "Standard",
+  },
+  {
+    id: "B002",
+    operator: "Megabus",
+    serviceNumber: "MGB-9021",
+    route: "Chicago, IL → Detroit, MI",
+    departure: "09:15",
+    arrival: "14:00",
+    duration: "4h 45m",
+    stops: 0,
+    seats: 81,
+    price: 8_700,
+    coachClass: "Economy",
+  },
+  {
+    id: "B003",
+    operator: "FlixBus",
+    serviceNumber: "FX-5510",
+    route: "Los Angeles, CA → Las Vegas, NV",
+    departure: "22:00",
+    arrival: "05:30+1",
+    duration: "7h 30m",
+    stops: 1,
+    seats: 56,
+    price: 13_200,
+    coachClass: "Standard",
+  },
+  {
+    id: "B004",
+    operator: "National Express",
+    serviceNumber: "NX-220",
+    route: "London → Birmingham",
     departure: "06:00",
+    arrival: "09:20",
+    duration: "3h 20m",
+    stops: 0,
+    seats: 49,
+    price: 10_500,
+    coachClass: "Standard",
+  },
+  {
+    id: "B005",
+    operator: "Trailways of New York",
+    serviceNumber: "TW-771",
+    route: "Buffalo, NY → New York, NY",
+    departure: "08:00",
     arrival: "18:30",
-    duration: "12h 30m",
-    stops: 1,
-    seats: 9,
-    price: 850,
-    class: "Economy",
+    duration: "10h 30m",
+    stops: 2,
+    seats: 45,
+    price: 18_600,
+    coachClass: "Standard",
   },
   {
-    id: "F002",
-    airline: "Emirates",
-    flightNumber: "EK623",
-    route: "LHE-DXB-JFK",
-    departure: "08:45",
-    arrival: "21:15",
-    duration: "16h 30m",
+    id: "B006",
+    operator: "Peter Pan Bus Lines",
+    serviceNumber: "PP-330",
+    route: "Boston, MA → Washington, DC",
+    departure: "07:45",
+    arrival: "16:15",
+    duration: "8h 30m",
     stops: 1,
-    seats: 5,
-    price: 1250,
-    class: "Economy",
+    seats: 50,
+    price: 16_500,
+    coachClass: "Standard",
   },
   {
-    id: "F003",
-    airline: "Turkish Airlines",
-    flightNumber: "TK715",
-    route: "LHE-IST-LHR",
-    departure: "03:30",
-    arrival: "14:20",
-    duration: "10h 50m",
+    id: "B007",
+    operator: "Jefferson Lines",
+    serviceNumber: "JL-412",
+    route: "Minneapolis, MN → Sioux Falls, SD",
+    departure: "10:30",
+    arrival: "16:00",
+    duration: "5h 30m",
     stops: 1,
-    seats: 12,
-    price: 780,
-    class: "Economy",
+    seats: 44,
+    price: 14_400,
+    coachClass: "Standard",
   },
   {
-    id: "F004",
-    airline: "Qatar Airways",
-    flightNumber: "QR601",
-    route: "LHE-DOH-CDG",
-    departure: "23:50",
-    arrival: "13:40+1",
-    duration: "13h 50m",
-    stops: 1,
-    seats: 7,
-    price: 920,
-    class: "Economy",
+    id: "B008",
+    operator: "RedCoach",
+    serviceNumber: "RC-88",
+    route: "Miami, FL → Orlando, FL",
+    departure: "14:00",
+    arrival: "17:45",
+    duration: "3h 45m",
+    stops: 0,
+    seats: 36,
+    price: 12_600,
+    coachClass: "Premium",
   },
 ];
 
-// Dummy hotel data
 const dummyHotels = [
   {
     id: "H001",
     name: "Grand Serena Hotel",
     stars: 5,
     address: "Khayaban-e-Suhrawardy, Islamabad",
-    pricePerNight: 180,
+    pricePerNight: 52_000,
     roomType: "Deluxe",
     image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=400",
   },
@@ -81,7 +138,7 @@ const dummyHotels = [
     name: "Pearl Continental",
     stars: 5,
     address: "The Mall, Lahore",
-    pricePerNight: 150,
+    pricePerNight: 43_000,
     roomType: "Standard",
     image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?w=400",
   },
@@ -90,7 +147,7 @@ const dummyHotels = [
     name: "Marriott Hotel",
     stars: 5,
     address: "Club Road, Karachi",
-    pricePerNight: 200,
+    pricePerNight: 58_000,
     roomType: "Deluxe",
     image: "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?w=400",
   },
@@ -99,7 +156,7 @@ const dummyHotels = [
     name: "Avari Towers",
     stars: 4,
     address: "Fatima Jinnah Road, Karachi",
-    pricePerNight: 120,
+    pricePerNight: 35_000,
     roomType: "Standard",
     image: "https://images.unsplash.com/photo-1564501049412-61c2a3083791?w=400",
   },
@@ -108,7 +165,7 @@ const dummyHotels = [
     name: "Nishat Hotel",
     stars: 4,
     address: "Mall Road, Lahore",
-    pricePerNight: 95,
+    pricePerNight: 27_500,
     roomType: "Standard",
     image: "https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=400",
   },
@@ -117,29 +174,24 @@ const dummyHotels = [
     name: "Mövenpick Hotel",
     stars: 5,
     address: "Kashmir Highway, Islamabad",
-    pricePerNight: 165,
+    pricePerNight: 48_000,
     roomType: "Deluxe",
     image: "https://images.unsplash.com/photo-1563911302283-d2bc129e7570?w=400",
   },
 ];
 
 export default function ResourceInventory() {
-  const [selectedFlights, setSelectedFlights] = useState<string[]>([]);
-  
-  // Flight search state
-  const [flightSearch, setFlightSearch] = useState({
-    tripType: "round-trip",
+  const [selectedBuses, setSelectedBuses] = useState<string[]>([]);
+  const [targetTripId, setTargetTripId] = useState<string>("");
+
+  const [busSearch, setBusSearch] = useState({
+    tripType: "one-way",
     origin: "",
     destination: "",
-    departureDate: "",
-    returnDate: "",
-    class: "economy",
-    adults: "1",
-    children: "0",
-    infants: "0",
+    travelDate: "",
+    coachClass: "standard",
   });
 
-  // Hotel search state
   const [hotelSearch, setHotelSearch] = useState({
     location: "",
     checkIn: "",
@@ -149,194 +201,197 @@ export default function ResourceInventory() {
     stars: "",
   });
 
-  const handleFlightSelection = (flightId: string) => {
-    setSelectedFlights((prev) =>
-      prev.includes(flightId)
-        ? prev.filter((id) => id !== flightId)
-        : [...prev, flightId]
+  const { data: myTripsData, isLoading: tripsLoading } = useQuery({
+    queryKey: ["my-trips"],
+    queryFn: getMyTrips,
+  });
+
+  const trips = myTripsData?.trips ?? [];
+
+  const handleBusToggle = (busId: string) => {
+    setSelectedBuses((prev) =>
+      prev.includes(busId) ? prev.filter((id) => id !== busId) : [...prev, busId]
     );
   };
 
-  const handleAddFlightsToTrip = () => {
-    if (selectedFlights.length === 0) {
-      toast.error("Please select at least one flight");
+  const handleAddBusesToTrip = () => {
+    const tid = parseInt(targetTripId, 10);
+    if (!tid || Number.isNaN(tid)) {
+      toast.error("Select a trip to attach these resources to");
       return;
     }
-    toast.success(`${selectedFlights.length} flight(s) added to draft`);
-    setSelectedFlights([]);
+    if (selectedBuses.length === 0) {
+      toast.error("Select at least one bus service");
+      return;
+    }
+    const rows = dummyBuses.filter((b) => selectedBuses.includes(b.id));
+    addBusesToTrip(
+      tid,
+      rows.map((b) => ({
+        operator: b.operator,
+        serviceNumber: b.serviceNumber,
+        route: b.route,
+        departure: b.departure,
+        arrival: b.arrival,
+        duration: b.duration,
+        stops: b.stops,
+        seats: b.seats,
+        price: b.price,
+        coachClass: b.coachClass,
+      }))
+    );
+    window.dispatchEvent(new Event(TRIP_RESOURCES_EVENT));
+    toast.success(`${rows.length} bus service(s) saved for trip #${tid}`);
+    setSelectedBuses([]);
   };
 
-  const handleAddHotelToTrip = (hotelName: string) => {
-    toast.success(`${hotelName} added to trip draft`);
+  const handleAddHotelToTrip = (hotel: (typeof dummyHotels)[0]) => {
+    const tid = parseInt(targetTripId, 10);
+    if (!tid || Number.isNaN(tid)) {
+      toast.error("Select a trip first");
+      return;
+    }
+    addHotelsToTrip(tid, [
+      {
+        name: hotel.name,
+        stars: hotel.stars,
+        address: hotel.address,
+        pricePerNight: hotel.pricePerNight,
+        roomType: hotel.roomType,
+      },
+    ]);
+    window.dispatchEvent(new Event(TRIP_RESOURCES_EVENT));
+    toast.success(`${hotel.name} added to trip #${tid}`);
   };
 
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-4xl font-heading font-bold gradient-text mb-2">
-            Resource Inventory
-          </h1>
-          <p className="text-body-text">Search and add flights and hotels to your trip packages</p>
+          <h1 className="text-4xl font-heading font-bold gradient-text mb-2">Resource Inventory</h1>
+          <p className="text-body-text">
+            Search intercity bus operators and hotels, then attach them to one of your listings for use in
+            Manage Details (logistics &amp; PNR).
+          </p>
         </div>
 
-        <Tabs defaultValue="flights" className="w-full">
+        <Card className="glass-card border-0 mb-8">
+          <CardHeader>
+            <CardTitle className="font-heading">Assign resources to a trip</CardTitle>
+          </CardHeader>
+          <CardContent className="max-w-md">
+            <Label>Your trip listing</Label>
+            {tripsLoading ? (
+              <Skeleton className="h-10 w-full mt-2" />
+            ) : trips.length === 0 ? (
+              <p className="text-sm text-muted-foreground mt-2">
+                Create a trip under Manage Trips first.
+              </p>
+            ) : (
+              <Select value={targetTripId} onValueChange={setTargetTripId}>
+                <SelectTrigger className="mt-2">
+                  <SelectValue placeholder="Select trip…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {trips.map((t) => (
+                    <SelectItem key={t.trip_id} value={String(t.trip_id)}>
+                      #{t.trip_id} — {t.origin_city} → {t.destination_city}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </CardContent>
+        </Card>
+
+        <Tabs defaultValue="buses" className="w-full">
           <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="flights" className="flex items-center gap-2">
-              <Plane className="h-4 w-4" />
-              Flight Search
+            <TabsTrigger value="buses" className="flex items-center gap-2">
+              <Bus className="h-4 w-4" />
+              Bus search
             </TabsTrigger>
             <TabsTrigger value="hotels" className="flex items-center gap-2">
               <Hotel className="h-4 w-4" />
-              Hotel Search
+              Hotel search
             </TabsTrigger>
           </TabsList>
 
-          {/* FLIGHT SEARCH TAB */}
-          <TabsContent value="flights" className="space-y-6">
+          <TabsContent value="buses" className="space-y-6">
             <Card className="glass-card border-0">
               <CardHeader>
-                <CardTitle className="font-heading">Flight Search</CardTitle>
+                <CardTitle className="font-heading">Bus search</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                   <div className="space-y-2">
-                    <Label htmlFor="trip-type">Trip Type</Label>
+                    <Label>Trip type</Label>
                     <Select
-                      value={flightSearch.tripType}
-                      onValueChange={(value) =>
-                        setFlightSearch({ ...flightSearch, tripType: value })
-                      }
+                      value={busSearch.tripType}
+                      onValueChange={(value) => setBusSearch({ ...busSearch, tripType: value })}
                     >
-                      <SelectTrigger id="trip-type">
+                      <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="one-way">One-way</SelectItem>
                         <SelectItem value="round-trip">Round-trip</SelectItem>
-                        <SelectItem value="multi-city">Multi-city</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="origin">Origin (Airport Code)</Label>
+                    <Label>Origin (city)</Label>
                     <Input
-                      id="origin"
-                      placeholder="e.g., LHE"
-                      value={flightSearch.origin}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, origin: e.target.value })
-                      }
+                      placeholder="e.g., New York"
+                      value={busSearch.origin}
+                      onChange={(e) => setBusSearch({ ...busSearch, origin: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="destination">Destination (Airport Code)</Label>
+                    <Label>Destination (city)</Label>
                     <Input
-                      id="destination"
-                      placeholder="e.g., JFK"
-                      value={flightSearch.destination}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, destination: e.target.value })
-                      }
+                      placeholder="e.g., Philadelphia"
+                      value={busSearch.destination}
+                      onChange={(e) => setBusSearch({ ...busSearch, destination: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="departure-date">Departure Date</Label>
+                    <Label>Travel date</Label>
                     <Input
-                      id="departure-date"
                       type="date"
-                      value={flightSearch.departureDate}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, departureDate: e.target.value })
-                      }
+                      value={busSearch.travelDate}
+                      onChange={(e) => setBusSearch({ ...busSearch, travelDate: e.target.value })}
                     />
                   </div>
-
-                  {flightSearch.tripType === "round-trip" && (
-                    <div className="space-y-2">
-                      <Label htmlFor="return-date">Return Date</Label>
-                      <Input
-                        id="return-date"
-                        type="date"
-                        value={flightSearch.returnDate}
-                        onChange={(e) =>
-                          setFlightSearch({ ...flightSearch, returnDate: e.target.value })
-                        }
-                      />
-                    </div>
-                  )}
-
                   <div className="space-y-2">
-                    <Label htmlFor="class">Class</Label>
+                    <Label>Coach class</Label>
                     <Select
-                      value={flightSearch.class}
-                      onValueChange={(value) =>
-                        setFlightSearch({ ...flightSearch, class: value })
-                      }
+                      value={busSearch.coachClass}
+                      onValueChange={(value) => setBusSearch({ ...busSearch, coachClass: value })}
                     >
-                      <SelectTrigger id="class">
+                      <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="economy">Economy</SelectItem>
-                        <SelectItem value="premium">Premium Economy</SelectItem>
-                        <SelectItem value="business">Business</SelectItem>
-                        <SelectItem value="first">First Class</SelectItem>
+                        <SelectItem value="standard">Standard</SelectItem>
+                        <SelectItem value="premium">Premium</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="adults">Adults</Label>
-                    <Input
-                      id="adults"
-                      type="number"
-                      min="1"
-                      value={flightSearch.adults}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, adults: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="children">Children (2-11)</Label>
-                    <Input
-                      id="children"
-                      type="number"
-                      min="0"
-                      value={flightSearch.children}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, children: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="infants">Infants (Under 2)</Label>
-                    <Input
-                      id="infants"
-                      type="number"
-                      min="0"
-                      value={flightSearch.infants}
-                      onChange={(e) =>
-                        setFlightSearch({ ...flightSearch, infants: e.target.value })
-                      }
-                    />
-                  </div>
                 </div>
-
-                <Button className="w-full md:w-auto">Search Flights</Button>
+                <Button
+                  type="button"
+                  className="w-full md:w-auto"
+                  onClick={() => toast.message("Sample results below — select services and assign to your trip.")}
+                >
+                  Search buses
+                </Button>
               </CardContent>
             </Card>
 
-            {/* Flight Results Table */}
             <Card className="glass-card border-0">
               <CardHeader>
-                <CardTitle className="font-heading">Available Flights</CardTitle>
+                <CardTitle className="font-heading">Available bus services</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -344,154 +399,105 @@ export default function ResourceInventory() {
                     <thead>
                       <tr className="border-b border-border">
                         <th className="text-left p-3 font-medium">Select</th>
-                        <th className="text-left p-3 font-medium">Airline</th>
-                        <th className="text-left p-3 font-medium">Flight #</th>
+                        <th className="text-left p-3 font-medium">Operator</th>
+                        <th className="text-left p-3 font-medium">Service #</th>
                         <th className="text-left p-3 font-medium">Route</th>
-                        <th className="text-left p-3 font-medium">Time (Dep/Arr)</th>
+                        <th className="text-left p-3 font-medium">Dep / Arr</th>
                         <th className="text-left p-3 font-medium">Duration</th>
                         <th className="text-left p-3 font-medium">Stops</th>
-                        <th className="text-left p-3 font-medium">Availability</th>
-                        <th className="text-right p-3 font-medium">Price</th>
+                        <th className="text-left p-3 font-medium">Seats</th>
+                        <th className="text-right p-3 font-medium">From</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {dummyFlights.map((flight) => (
-                        <tr
-                          key={flight.id}
-                          className="border-b border-border hover:bg-muted/50 transition-colors"
-                        >
+                      {dummyBuses.map((bus) => (
+                        <tr key={bus.id} className="border-b border-border hover:bg-muted/50 transition-colors">
                           <td className="p-3">
                             <Checkbox
-                              checked={selectedFlights.includes(flight.id)}
-                              onCheckedChange={() => handleFlightSelection(flight.id)}
+                              checked={selectedBuses.includes(bus.id)}
+                              onCheckedChange={() => handleBusToggle(bus.id)}
                             />
                           </td>
-                          <td className="p-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
-                                {flight.airline.substring(0, 2)}
-                              </div>
-                              <span className="text-sm font-medium">{flight.airline}</span>
-                            </div>
-                          </td>
-                          <td className="p-3 text-sm">{flight.flightNumber}</td>
-                          <td className="p-3 text-sm font-medium">{flight.route}</td>
+                          <td className="p-3 text-sm font-medium">{bus.operator}</td>
+                          <td className="p-3 text-sm">{bus.serviceNumber}</td>
+                          <td className="p-3 text-sm">{bus.route}</td>
                           <td className="p-3 text-sm">
-                            {flight.departure} - {flight.arrival}
+                            {bus.departure} – {bus.arrival}
                           </td>
-                          <td className="p-3 text-sm">{flight.duration}</td>
-                          <td className="p-3 text-sm">{flight.stops} stop{flight.stops !== 1 && 's'}</td>
-                          <td className="p-3">
-                            <span
-                              className={`text-xs px-2 py-1 rounded-full ${
-                                flight.seats < 5
-                                  ? "bg-destructive/10 text-destructive"
-                                  : "bg-accent/10 text-accent"
-                              }`}
-                            >
-                              {flight.seats} seats left
-                            </span>
-                          </td>
-                          <td className="p-3 text-right font-bold text-primary">
-                            ${flight.price}
-                          </td>
+                          <td className="p-3 text-sm">{bus.duration}</td>
+                          <td className="p-3 text-sm">{bus.stops}</td>
+                          <td className="p-3 text-sm">{bus.seats}</td>
+                          <td className="p-3 text-right font-bold text-primary">{formatPkr(bus.price)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-
                 <div className="mt-6 flex justify-end">
-                  <Button
-                    onClick={handleAddFlightsToTrip}
-                    disabled={selectedFlights.length === 0}
-                  >
-                    Add Selected Flights to Trip Draft ({selectedFlights.length})
+                  <Button onClick={handleAddBusesToTrip} disabled={selectedBuses.length === 0}>
+                    Add selected buses to trip ({selectedBuses.length})
                   </Button>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* HOTEL SEARCH TAB */}
           <TabsContent value="hotels" className="space-y-6">
             <Card className="glass-card border-0">
               <CardHeader>
-                <CardTitle className="font-heading">Hotel Search</CardTitle>
+                <CardTitle className="font-heading">Hotel search</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                   <div className="space-y-2">
-                    <Label htmlFor="location">Location</Label>
+                    <Label>Location</Label>
                     <Input
-                      id="location"
                       placeholder="City or landmark"
                       value={hotelSearch.location}
-                      onChange={(e) =>
-                        setHotelSearch({ ...hotelSearch, location: e.target.value })
-                      }
+                      onChange={(e) => setHotelSearch({ ...hotelSearch, location: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="check-in">Check-in Date</Label>
+                    <Label>Check-in</Label>
                     <Input
-                      id="check-in"
                       type="date"
                       value={hotelSearch.checkIn}
-                      onChange={(e) =>
-                        setHotelSearch({ ...hotelSearch, checkIn: e.target.value })
-                      }
+                      onChange={(e) => setHotelSearch({ ...hotelSearch, checkIn: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="check-out">Check-out Date</Label>
+                    <Label>Check-out</Label>
                     <Input
-                      id="check-out"
                       type="date"
                       value={hotelSearch.checkOut}
-                      onChange={(e) =>
-                        setHotelSearch({ ...hotelSearch, checkOut: e.target.value })
-                      }
+                      onChange={(e) => setHotelSearch({ ...hotelSearch, checkOut: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="rooms">Rooms</Label>
+                    <Label>Rooms</Label>
                     <Input
-                      id="rooms"
                       type="number"
-                      min="1"
+                      min={1}
                       value={hotelSearch.rooms}
-                      onChange={(e) =>
-                        setHotelSearch({ ...hotelSearch, rooms: e.target.value })
-                      }
+                      onChange={(e) => setHotelSearch({ ...hotelSearch, rooms: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="guests">Guests</Label>
+                    <Label>Guests</Label>
                     <Input
-                      id="guests"
                       type="number"
-                      min="1"
+                      min={1}
                       value={hotelSearch.guests}
-                      onChange={(e) =>
-                        setHotelSearch({ ...hotelSearch, guests: e.target.value })
-                      }
+                      onChange={(e) => setHotelSearch({ ...hotelSearch, guests: e.target.value })}
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="stars">Star Rating</Label>
+                    <Label>Star rating</Label>
                     <Select
                       value={hotelSearch.stars}
-                      onValueChange={(value) =>
-                        setHotelSearch({ ...hotelSearch, stars: value })
-                      }
+                      onValueChange={(value) => setHotelSearch({ ...hotelSearch, stars: value })}
                     >
-                      <SelectTrigger id="stars">
+                      <SelectTrigger>
                         <SelectValue placeholder="Any" />
                       </SelectTrigger>
                       <SelectContent>
@@ -503,12 +509,16 @@ export default function ResourceInventory() {
                     </Select>
                   </div>
                 </div>
-
-                <Button className="w-full md:w-auto">Search Hotels</Button>
+                <Button
+                  type="button"
+                  className="w-full md:w-auto"
+                  onClick={() => toast.message("Sample hotels below — add to your selected trip.")}
+                >
+                  Search hotels
+                </Button>
               </CardContent>
             </Card>
 
-            {/* Hotel Results Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {dummyHotels.map((hotel) => (
                 <Card key={hotel.id} className="glass-card border-0">
@@ -520,9 +530,7 @@ export default function ResourceInventory() {
                     />
                     <div className="p-4 space-y-3">
                       <div>
-                        <h3 className="font-heading font-bold text-lg mb-1">
-                          {hotel.name}
-                        </h3>
+                        <h3 className="font-heading font-bold text-lg mb-1">{hotel.name}</h3>
                         <div className="flex items-center gap-1 text-accent mb-2">
                           {Array.from({ length: hotel.stars }).map((_, i) => (
                             <span key={i}>★</span>
@@ -530,21 +538,15 @@ export default function ResourceInventory() {
                         </div>
                         <p className="text-sm text-body-text">{hotel.address}</p>
                       </div>
-
                       <div className="flex items-center justify-between pt-2 border-t border-border">
                         <div>
                           <p className="text-xs text-body-text">Per night</p>
-                          <p className="text-xl font-bold text-primary">
-                            ${hotel.pricePerNight}
-                          </p>
+                          <p className="text-xl font-bold text-primary">{formatPkr(hotel.pricePerNight)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-body-text mb-1">{hotel.roomType}</p>
-                          <Button
-                            size="sm"
-                            onClick={() => handleAddHotelToTrip(hotel.name)}
-                          >
-                            Add to Trip
+                          <Button size="sm" onClick={() => handleAddHotelToTrip(hotel)}>
+                            Add to trip
                           </Button>
                         </div>
                       </div>

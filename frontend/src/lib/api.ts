@@ -139,6 +139,10 @@ async function apiClient<T>(
       headers,
     });
 
+    if (response.status === 204) {
+      return {} as T;
+    }
+
     // Handle non-JSON responses
     const contentType = response.headers.get("content-type");
     if (!contentType?.includes("application/json")) {
@@ -359,6 +363,59 @@ export async function updateNotificationPreferences(
   });
 }
 
+/** User profile (Supabase `profiles` + email from JWT) */
+export interface UserProfile {
+  id: string;
+  email?: string | null;
+  username?: string | null;
+  preferences?: Record<string, unknown> | null;
+  profile_details?: Record<string, unknown> | null;
+  updated_at?: string | null;
+}
+
+export type UserProfileUpdate = Partial<
+  Pick<UserProfile, "username" | "preferences" | "profile_details">
+>;
+
+export async function getUserProfile(): Promise<UserProfile> {
+  return apiClient<UserProfile>("/api/profile", { method: "GET" });
+}
+
+export async function updateUserProfile(payload: UserProfileUpdate): Promise<UserProfile> {
+  return apiClient<UserProfile>("/api/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Booking-related notifications for the current traveler */
+export interface BookingNotificationItem {
+  notification_id: number;
+  booking_id: number;
+  user_id: string;
+  notification_type: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export async function getMyBookingNotifications(): Promise<BookingNotificationItem[]> {
+  return apiClient<BookingNotificationItem[]>("/api/notifications", { method: "GET" });
+}
+
+export async function markBookingNotificationRead(
+  notificationId: number
+): Promise<BookingNotificationItem> {
+  return apiClient<BookingNotificationItem>(`/api/notifications/${notificationId}/read`, {
+    method: "PATCH",
+  });
+}
+
+export async function markAllBookingNotificationsRead(): Promise<void> {
+  await apiClient<Record<string, never>>("/api/notifications/read-all", { method: "POST" });
+}
+
 /**
  * Get top rated travel agents
  */
@@ -383,26 +440,30 @@ export async function getTopAgents(limit: number = 4): Promise<TopAgentsResponse
 /**
  * Upload trip image to Supabase Storage
  */
+const tripImagesBucket =
+  (import.meta.env.VITE_SUPABASE_TRIP_IMAGES_BUCKET as string | undefined)?.trim() || "trip-images";
+
 export async function uploadTripImage(file: File, tripId: number): Promise<string> {
   const fileExt = file.name.split('.').pop();
   const fileName = `trip-${tripId}-${Date.now()}.${fileExt}`;
-  
-  const { data, error } = await supabase.storage
-    .from('trip-images')
-    .upload(fileName, file, {
-      cacheControl: '3600',
-      upsert: false
-    });
+
+  const { data, error } = await supabase.storage.from(tripImagesBucket).upload(fileName, file, {
+    cacheControl: "3600",
+    upsert: false,
+  });
 
   if (error) {
     console.error("[API] Error uploading image:", error);
-    throw new Error(`Failed to upload image: ${error.message}`);
+    const hint =
+      error.message?.toLowerCase().includes("bucket") || error.message?.toLowerCase().includes("not found")
+        ? ` Create a public bucket named "${tripImagesBucket}" in Supabase Storage (see backend/supabase/storage_trip_images_bucket.sql) or set VITE_SUPABASE_TRIP_IMAGES_BUCKET to your bucket name.`
+        : "";
+    throw new Error(`Failed to upload image: ${error.message}.${hint}`);
   }
 
-  // Get public URL
-  const { data: { publicUrl } } = supabase.storage
-    .from('trip-images')
-    .getPublicUrl(data.path);
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(tripImagesBucket).getPublicUrl(data.path);
 
   return publicUrl;
 }
@@ -714,5 +775,26 @@ export async function getUnreadMessageCount(): Promise<{ count: number }> {
   });
 }
 
+export async function markAgentConversationRead(otherAgentId: number): Promise<void> {
+  await apiClient<Record<string, never>>(
+    `/api/collaboration/messages/read?other_agent_id=${otherAgentId}`,
+    { method: "PATCH" }
+  );
+}
+
+export interface AgentNotificationFeedItem {
+  notification_id: string;
+  category: string;
+  title: string;
+  body: string;
+  created_at: string;
+}
+
+export async function getAgentNotificationFeed(limit = 30): Promise<AgentNotificationFeedItem[]> {
+  return apiClient<AgentNotificationFeedItem[]>(
+    `/api/collaboration/agent-notification-feed?limit=${limit}`,
+    { method: "GET" }
+  );
+}
 
 

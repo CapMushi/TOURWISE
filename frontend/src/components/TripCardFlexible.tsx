@@ -1,7 +1,8 @@
-import { MapPin, Calendar, DollarSign, Users, Bus, Plane, Train, Car, Ship } from "lucide-react";
+import { MapPin, Calendar, Users, Bus, Plane, Train, Car, Ship } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
+import { formatPkr } from "@/lib/currency";
 import type { TripResponse } from "@/lib/api";
 
 interface TripCardFlexibleProps {
@@ -116,9 +117,9 @@ export function TripCardFlexible({
           </div>
           <div className="text-right">
             <div className="text-2xl font-heading font-bold text-primary">
-              ${parseFloat(trip.price.toString()).toFixed(2)}
+              {formatPkr(trip.price)}
             </div>
-            <div className="text-xs text-body-text">per person</div>
+            <div className="text-xs text-body-text">per person (PKR)</div>
           </div>
         </div>
 

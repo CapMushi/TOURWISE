@@ -3,12 +3,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { addFavorite, getFavoriteStatus, getTripById, removeFavorite } from "@/lib/api";
 import { format } from "date-fns";
+import { formatPkr } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Check, X, MapPin, Calendar, Users, DollarSign, Heart } from "lucide-react";
+import { AlertCircle, Check, X, MapPin, Calendar, Users, Banknote, Heart } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
 
@@ -176,9 +177,9 @@ export default function TripDetails() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5 text-primary" />
+                <Banknote className="h-5 w-5 text-primary" />
                 <p className="text-xl font-bold text-primary">
-                  ${parseFloat(trip.price.toString()).toFixed(2)} per person
+                  {formatPkr(trip.price)} per person (PKR)
                 </p>
               </div>
               
@@ -304,9 +305,9 @@ export default function TripDetails() {
               <div>
                 <h4 className="font-medium mb-2">Carpooling Options:</h4>
                 <ul className="space-y-1 ml-4">
-                  <li>• Passenger Option: $250 (need a ride)</li>
-                  <li>• Driver Option: $220 (drive and take passengers)</li>
-                  <li>• Self-Drive Option: $235 (drive alone)</li>
+                  <li>• Passenger Option: {formatPkr(69500)} (need a ride)</li>
+                  <li>• Driver Option: {formatPkr(61200)} (drive and take passengers)</li>
+                  <li>• Self-Drive Option: {formatPkr(65300)} (drive alone)</li>
                 </ul>
               </div>
               
@@ -419,9 +420,9 @@ export default function TripDetails() {
                 
                 <div className="border-t border-border pt-4">
                   <p className="text-3xl font-bold text-primary">
-                    ${parseFloat(trip.price.toString()).toFixed(2)}
+                    {formatPkr(trip.price)}
                   </p>
-                  <p className="text-sm text-body-text">per person</p>
+                  <p className="text-sm text-body-text">per person (PKR)</p>
                 </div>
 
                 <Button 
