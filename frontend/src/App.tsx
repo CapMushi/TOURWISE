@@ -34,6 +34,9 @@ import ResourceInventory from "./pages/ResourceInventory";
 import SearchResults from "./pages/SearchResults";
 import NotFound from "./pages/NotFound";
 import CollaborationHub from "./pages/CollaborationHub";
+import TravelerNotifications from "./pages/TravelerNotifications";
+import EditProfile from "./pages/EditProfile";
+import ExploreTrips from "./pages/ExploreTrips";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
@@ -82,11 +85,41 @@ const App = () => (
               }
             />
             <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <TravelerNotifications />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/profile"
               element={
                 <ProtectedRoute>
                   <AppLayout userRole="traveler">
                     <Profile />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile/edit"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <EditProfile />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/explore"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <ExploreTrips />
                   </AppLayout>
                 </ProtectedRoute>
               }

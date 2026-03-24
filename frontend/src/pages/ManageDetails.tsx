@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getTripById, updateTrip, uploadTripImage } from "@/lib/api";
@@ -13,6 +13,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Heart } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  getTripResources,
+  busPnr,
+  hotelConfCode,
+  totalImportedSeats,
+  type TripResourcesPayload,
+} from "@/lib/tripResourcesStorage";
+import { formatPkr } from "@/lib/currency";
+
+const TRIP_RESOURCES_EVENT = "tourwise-trip-resources-changed";
 
 export default function ManageDetails() {
   const navigate = useNavigate();
@@ -30,6 +40,24 @@ export default function ManageDetails() {
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [linkedResources, setLinkedResources] = useState<TripResourcesPayload>({
+    buses: [],
+    hotels: [],
+  });
+
+  const refreshLinkedResources = useCallback(() => {
+    if (tripIdNum) setLinkedResources(getTripResources(tripIdNum));
+  }, [tripIdNum]);
+
+  useEffect(() => {
+    refreshLinkedResources();
+  }, [refreshLinkedResources]);
+
+  useEffect(() => {
+    const onResourcesChanged = () => refreshLinkedResources();
+    window.addEventListener(TRIP_RESOURCES_EVENT, onResourcesChanged);
+    return () => window.removeEventListener(TRIP_RESOURCES_EVENT, onResourcesChanged);
+  }, [refreshLinkedResources]);
 
   // Pre-populated with existing trip data
   const [formData, setFormData] = useState({
@@ -299,15 +327,15 @@ export default function ManageDetails() {
           </CardHeader>
           <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="basePrice">Base Price (per person)</Label>
+                <Label htmlFor="basePrice">Base price per person (PKR)</Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">Rs</span>
                   <Input
                     id="basePrice"
                     type="number"
                     value={formData.basePrice}
                     onChange={(e) => setFormData({ ...formData, basePrice: e.target.value })}
-                    className="glass-panel border-white/30 pl-7"
+                    className="glass-panel border-white/30 pl-12"
                     step="0.01"
                     min="0"
                   />
@@ -336,12 +364,66 @@ export default function ManageDetails() {
           </CardContent>
         </Card>
 
+        {/* Operations & optimization (from Resource Inventory) */}
+        <Card className="glass-panel border-0">
+          <CardHeader>
+            <CardTitle className="font-heading text-2xl">Operations &amp; optimization</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-body-text">
+              Imported bus capacity vs listing seats helps you avoid over-selling ground transport.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Trip seats</p>
+                <p className="text-2xl font-heading font-bold text-heading">{trip.total_seats}</p>
+                <p className="text-xs text-body-text mt-1">{trip.available_seats} available</p>
+              </div>
+              <div className="p-4 rounded-lg bg-secondary/10 border border-secondary/20">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Imported bus seats</p>
+                <p className="text-2xl font-heading font-bold text-heading">
+                  {totalImportedSeats(linkedResources)}
+                </p>
+                <p className="text-xs text-body-text mt-1">
+                  {linkedResources.buses.length} service{linkedResources.buses.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <div className="p-4 rounded-lg bg-accent/10 border border-accent/20">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Hotels linked</p>
+                <p className="text-2xl font-heading font-bold text-heading">
+                  {linkedResources.hotels.length}
+                </p>
+                <p className="text-xs text-body-text mt-1">From inventory</p>
+              </div>
+            </div>
+            {linkedResources.buses.length > 0 &&
+              totalImportedSeats(linkedResources) < trip.total_seats && (
+                <p className="text-sm text-amber-700 dark:text-amber-400">
+                  Imported bus seats are below total trip seats — add more bus services or adjust marketing.
+                </p>
+              )}
+          </CardContent>
+        </Card>
+
         {/* Transportation & Logistics */}
         <Card className="glass-panel border-0">
           <CardHeader>
             <CardTitle className="font-heading text-2xl">Transportation & Logistics</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {linkedResources.buses.length > 0 && (
+              <div className="p-4 rounded-lg border border-white/30 bg-white/5 space-y-2">
+                <p className="text-sm font-medium text-heading">Ground transport (from inventory)</p>
+                <ul className="space-y-2 text-sm text-body-text">
+                  {linkedResources.buses.map((b) => (
+                    <li key={b.id}>
+                      <span className="font-medium text-heading">{b.operator}</span> {b.serviceNumber} —{" "}
+                      {b.route} ({b.departure}–{b.arrival}, {b.duration}, {b.seats} seats)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="transportMode">Primary Transport Mode</Label>
@@ -516,29 +598,55 @@ export default function ManageDetails() {
         {/* Travel Logistics & PNR */}
         <Card className="glass-panel border-0">
           <CardHeader>
-            <CardTitle className="font-heading text-2xl">Travel Logistics & PNR</CardTitle>
+            <CardTitle className="font-heading text-2xl">Travel Logistics &amp; PNR</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button 
-              type="button" 
-              variant="secondary" 
-              onClick={() => navigate("/agent/resource-inventory")}
-            >
-              Import Flight/Hotel from Inventory
+            <Button type="button" variant="secondary" onClick={() => navigate("/agent/resource-inventory")}>
+              Import bus / hotel from inventory
             </Button>
-            <div className="p-4 glass-panel rounded-lg border-white/30 mt-4">
-              <p className="text-sm font-medium mb-2">Imported Resources:</p>
-              <div className="space-y-2">
-                <div className="p-3 bg-primary/10 rounded-lg border border-primary/20">
-                  <p className="text-sm"><strong>Flight:</strong> PK701 - Lahore to Manchester - Included in Price</p>
-                  <p className="text-xs text-muted-foreground mt-1">Departure: 06:00 | Arrival: 18:30 | 1 Stop</p>
-                </div>
-                <div className="p-3 bg-accent/10 rounded-lg border border-accent/20">
-                  <p className="text-sm"><strong>Hotel:</strong> Grand Serena Hotel - 5★ Deluxe Room</p>
-                  <p className="text-xs text-muted-foreground mt-1">$180 per night</p>
-                </div>
+            <p className="text-xs text-muted-foreground">
+              PNR-style references are generated for resources you attach in Resource Inventory for this trip
+              (#{trip.trip_id}).
+            </p>
+            {linkedResources.buses.length === 0 && linkedResources.hotels.length === 0 ? (
+              <div className="p-6 rounded-lg border border-dashed border-white/30 text-center text-body-text text-sm">
+                No resources linked yet. Choose your trip in Resource Inventory, add buses or hotels, then return
+                here.
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                {linkedResources.buses.map((b) => (
+                  <div
+                    key={b.id}
+                    className="p-4 bg-primary/10 rounded-lg border border-primary/20 space-y-1"
+                  >
+                    <p className="text-sm font-semibold text-heading">
+                      Bus — {b.operator} ({b.serviceNumber})
+                    </p>
+                    <p className="text-xs text-muted-foreground font-mono">PNR / ref: {busPnr(b)}</p>
+                    <p className="text-sm text-body-text">
+                      {b.route} · {b.departure}–{b.arrival} · {b.coachClass} · {formatPkr(b.price)} indicative
+                    </p>
+                  </div>
+                ))}
+                {linkedResources.hotels.map((h) => (
+                  <div
+                    key={h.id}
+                    className="p-4 bg-accent/10 rounded-lg border border-accent/20 space-y-1"
+                  >
+                    <p className="text-sm font-semibold text-heading">
+                      Hotel — {h.name} ({h.stars}★, {h.roomType})
+                    </p>
+                    <p className="text-xs text-muted-foreground font-mono">
+                      Confirmation code: {hotelConfCode(h)}
+                    </p>
+                    <p className="text-sm text-body-text">
+                      {h.address} · {formatPkr(h.pricePerNight)}/night
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

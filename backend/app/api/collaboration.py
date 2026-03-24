@@ -984,3 +984,173 @@ async def get_unread_message_count(
             detail=f"Error fetching unread count: {str(e)}",
         )
 
+
+@router.patch("/messages/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_conversation_messages_read(
+    other_agent_id: int = Query(..., description="Mark messages from this agent as read"),
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Mark all messages received from other_agent_id as read for the current agent."""
+    try:
+        agent_result = supabase.table("travel_agent").select("agent_id").eq("user_id", current_user["id"]).execute()
+        if not agent_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not a travel agent",
+            )
+        current_agent_id = agent_result.data[0]["agent_id"]
+        supabase.table("agent_messages").update({"is_read": True}).eq(
+            "receiver_agent_id", current_agent_id
+        ).eq("sender_agent_id", other_agent_id).execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error marking messages read: {str(e)}",
+        )
+
+
+class AgentNotificationFeedItem(BaseModel):
+    notification_id: str
+    category: str
+    title: str
+    body: str
+    created_at: datetime
+
+
+@router.get("/agent-notification-feed", response_model=List[AgentNotificationFeedItem])
+async def get_agent_notification_feed(
+    limit: int = Query(30, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Unified notifications: pending pooling requests, recent bookings on agent trips, unread messages summary."""
+    try:
+        agent_result = supabase.table("travel_agent").select("agent_id, name").eq("user_id", current_user["id"]).execute()
+        if not agent_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not a travel agent",
+            )
+        agent_id = agent_result.data[0]["agent_id"]
+        agent_name = agent_result.data[0].get("name") or "Agent"
+
+        items: List[dict] = []
+
+        pooling_res = (
+            supabase.table("bus_pooling_requests")
+            .select("*")
+            .eq("target_agent_id", agent_id)
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        for req in pooling_res.data or []:
+            ra = supabase.table("travel_agent").select("name").eq("agent_id", req["requester_agent_id"]).execute()
+            req_name = ra.data[0].get("name") if ra.data else f"Agent #{req['requester_agent_id']}"
+            trip_res = supabase.table("trips").select("origin_city, destination_city").eq("trip_id", req["target_trip_id"]).execute()
+            trip = trip_res.data[0] if trip_res.data else {}
+            oc = trip.get("origin_city", "")
+            dc = trip.get("destination_city", "")
+            items.append({
+                "notification_id": f"pool-{req['request_id']}",
+                "category": "pooling",
+                "title": "Bus pooling request",
+                "body": f"{req_name} wants to pool buses for {oc} → {dc}. Review in Collaboration Hub.",
+                "created_at": req["created_at"],
+            })
+
+        trips_res = supabase.table("trips").select("trip_id").eq("agent_id", agent_id).execute()
+        trip_ids = [t["trip_id"] for t in (trips_res.data or [])]
+        if trip_ids:
+            bookings_res = (
+                supabase.table("booking")
+                .select("*")
+                .in_("trip_id", trip_ids)
+                .order("booking_date", desc=True)
+                .limit(20)
+                .execute()
+            )
+            for b in bookings_res.data or []:
+                tr = supabase.table("trips").select("origin_city, destination_city").eq("trip_id", b["trip_id"]).execute()
+                trow = tr.data[0] if tr.data else {}
+                ref = b.get("booking_reference", "")
+                status_txt = b.get("status", "")
+                items.append({
+                    "notification_id": f"book-{b['booking_id']}",
+                    "category": "booking",
+                    "title": f"Booking {status_txt}",
+                    "body": f"{ref}: {trow.get('origin_city', '')} → {trow.get('destination_city', '')} — {b.get('number_of_seats', 0)} seat(s).",
+                    "created_at": b["booking_date"],
+                })
+
+        unread_cnt_res = (
+            supabase.table("agent_messages")
+            .select("message_id", count="exact")
+            .eq("receiver_agent_id", agent_id)
+            .eq("is_read", False)
+            .execute()
+        )
+        unread_n = getattr(unread_cnt_res, "count", None)
+        if unread_n is None:
+            unread_n = len(unread_cnt_res.data) if unread_cnt_res.data else 0
+        latest_unread_ts = None
+        if unread_n > 0:
+            latest_row = (
+                supabase.table("agent_messages")
+                .select("created_at")
+                .eq("receiver_agent_id", agent_id)
+                .eq("is_read", False)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if latest_row.data:
+                latest_unread_ts = latest_row.data[0].get("created_at")
+            ts = latest_unread_ts or datetime.utcnow().isoformat()
+            items.append({
+                "notification_id": "msg-unread-summary",
+                "category": "message",
+                "title": "Unread agent messages",
+                "body": f"You have {unread_n} unread message(s). Open Collaboration Hub → Messages.",
+                "created_at": ts,
+            })
+
+        def parse_ts(x):
+            v = x["created_at"]
+            if isinstance(v, datetime):
+                return v
+            if isinstance(v, str):
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return datetime.min
+
+        items.sort(key=parse_ts, reverse=True)
+        items = items[:limit]
+
+        out: List[AgentNotificationFeedItem] = []
+        for x in items:
+            ca = x["created_at"]
+            if isinstance(ca, str):
+                ca = datetime.fromisoformat(ca.replace("Z", "+00:00"))
+            out.append(
+                AgentNotificationFeedItem(
+                    notification_id=x["notification_id"],
+                    category=x["category"],
+                    title=x["title"],
+                    body=x["body"],
+                    created_at=ca,
+                )
+            )
+        return out
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error building notification feed: {str(e)}",
+        )
+

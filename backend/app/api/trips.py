@@ -59,6 +59,7 @@ class TripResponse(BaseModel):
     agent_name: Optional[str] = None
     image_url: Optional[str] = None
     suitability: Optional[str] = None
+    image_gallery: List[str] = []
 
     class Config:
         from_attributes = True
@@ -67,6 +68,26 @@ class TripResponse(BaseModel):
 class TripListResponse(BaseModel):
     trips: List[TripResponse]
     total: int
+
+
+def _fetch_trip_images_map(supabase, trip_ids: List[int]) -> dict[int, List[str]]:
+    if not trip_ids:
+        return {}
+
+    result = (
+        supabase.table("trip_images")
+        .select("trip_id, image_url, sort_order, created_at")
+        .in_("trip_id", trip_ids)
+        .order("sort_order", desc=False)
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    images_map: dict[int, List[str]] = {}
+    for row in result.data:
+        t_id = row["trip_id"]
+        images_map.setdefault(t_id, []).append(row["image_url"])
+    return images_map
 
 
 @router.get("", response_model=TripListResponse)
@@ -149,6 +170,8 @@ async def get_trips(
     
     try:
         result = query.execute()
+        trip_ids = [trip_row["trip_id"] for trip_row in result.data]
+        images_map = _fetch_trip_images_map(supabase, trip_ids)
         
         trips = []
         for trip_data in result.data:
@@ -174,8 +197,9 @@ async def get_trips(
                 available_seats=trip_data["available_seats"],
                 created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
                 agent_name=agent_name,
-                image_url=trip_data.get("image_url"),
+                image_url=trip_data.get("image_url") or (images_map.get(trip_data["trip_id"], [None])[0]),
                 suitability=trip_data.get("suitability"),
+                image_gallery=images_map.get(trip_data["trip_id"], []),
             )
             trips.append(trip)
         
@@ -213,6 +237,8 @@ async def get_my_trips(
     try:
         # Get all trips for this agent (including those with 0 available seats)
         result = supabase.table("trips").select("*").eq("agent_id", agent_id).order("created_at", desc=True).execute()
+        trip_ids = [trip_row["trip_id"] for trip_row in result.data]
+        images_map = _fetch_trip_images_map(supabase, trip_ids)
 
         trips = []
         for trip_data in result.data:
@@ -229,8 +255,9 @@ async def get_my_trips(
                 total_seats=trip_data["total_seats"],
                 available_seats=trip_data["available_seats"],
                 created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
-                image_url=trip_data.get("image_url"),
+                image_url=trip_data.get("image_url") or (images_map.get(trip_data["trip_id"], [None])[0]),
                 suitability=trip_data.get("suitability"),
+                image_gallery=images_map.get(trip_data["trip_id"], []),
             )
             trips.append(trip)
 
@@ -309,6 +336,7 @@ async def create_trip(
             )
 
         created_trip = result.data[0]
+        images_map = _fetch_trip_images_map(supabase, [created_trip["trip_id"]])
 
         # Convert back to response model
         return TripResponse(
@@ -324,8 +352,9 @@ async def create_trip(
             total_seats=created_trip["total_seats"],
             available_seats=created_trip["available_seats"],
             created_at=datetime.fromisoformat(created_trip["created_at"].replace("Z", "+00:00")),
-            image_url=created_trip.get("image_url"),
+            image_url=created_trip.get("image_url") or (images_map.get(created_trip["trip_id"], [None])[0]),
             suitability=created_trip.get("suitability"),
+            image_gallery=images_map.get(created_trip["trip_id"], []),
         )
 
     except Exception as e:
@@ -373,6 +402,7 @@ async def get_trip_by_id(
                 agent_name = trip_data["travel_agent"][0].get("name")
             elif isinstance(trip_data["travel_agent"], dict):
                 agent_name = trip_data["travel_agent"].get("name")
+        images_map = _fetch_trip_images_map(supabase, [trip_id])
         
         return TripResponse(
             trip_id=trip_data["trip_id"],
@@ -388,8 +418,9 @@ async def get_trip_by_id(
             available_seats=trip_data["available_seats"],
             created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
             agent_name=agent_name,
-            image_url=trip_data.get("image_url"),
+            image_url=trip_data.get("image_url") or (images_map.get(trip_id, [None])[0]),
             suitability=trip_data.get("suitability"),
+            image_gallery=images_map.get(trip_id, []),
         )
     
     except HTTPException:
@@ -404,6 +435,108 @@ async def get_trip_by_id(
 
 class UpdateTripRequest(BaseModel):
     image_url: Optional[str] = None
+
+
+class TripImageCreateRequest(BaseModel):
+    image_url: str
+    alt_text: Optional[str] = None
+    sort_order: int = 0
+    is_cover: bool = False
+
+
+class TripImageResponse(BaseModel):
+    image_id: int
+    trip_id: int
+    image_url: str
+    alt_text: Optional[str] = None
+    sort_order: int
+    is_cover: bool
+    created_at: datetime
+
+
+@router.get("/{trip_id}/images", response_model=List[TripImageResponse])
+async def get_trip_images(trip_id: int):
+    supabase = get_supabase_client()
+
+    try:
+        trip_result = supabase.table("trips").select("trip_id").eq("trip_id", trip_id).limit(1).execute()
+        if not trip_result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+        result = (
+            supabase.table("trip_images")
+            .select("image_id, trip_id, image_url, alt_text, sort_order, is_cover, created_at")
+            .eq("trip_id", trip_id)
+            .order("sort_order", desc=False)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return [TripImageResponse(**row) for row in result.data]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch trip images: {str(e)}",
+        )
+
+
+@router.post("/{trip_id}/images", response_model=TripImageResponse, status_code=status.HTTP_201_CREATED)
+async def create_trip_image(
+    trip_id: int,
+    payload: TripImageCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = get_supabase_client()
+    user_id = current_user["id"]
+
+    # Verify trip ownership (agent only)
+    trip_result = supabase.table("trips").select("agent_id").eq("trip_id", trip_id).limit(1).execute()
+    if not trip_result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+    agent_result = supabase.table("travel_agent").select("agent_id").eq("user_id", user_id).limit(1).execute()
+    if not agent_result.data:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not a registered travel agent.")
+
+    if trip_result.data[0]["agent_id"] != agent_result.data[0]["agent_id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to add images for this trip.")
+
+    try:
+        if payload.is_cover:
+            supabase.table("trip_images").update({"is_cover": False}).eq("trip_id", trip_id).eq("is_cover", True).execute()
+
+        insert_result = (
+            supabase.table("trip_images")
+            .insert(
+                {
+                    "trip_id": trip_id,
+                    "image_url": payload.image_url,
+                    "alt_text": payload.alt_text,
+                    "sort_order": payload.sort_order,
+                    "is_cover": payload.is_cover,
+                    "created_by": user_id,
+                }
+            )
+            .execute()
+        )
+        if not insert_result.data:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create trip image")
+
+        created = insert_result.data[0]
+
+        # Keep backward compatibility by syncing cover image to trips.image_url
+        if payload.is_cover:
+            supabase.table("trips").update({"image_url": payload.image_url}).eq("trip_id", trip_id).execute()
+
+        return TripImageResponse(**created)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create trip image: {str(e)}",
+        )
 
 
 @router.patch("/{trip_id}", response_model=TripResponse)
@@ -476,6 +609,7 @@ async def update_trip(
         agent_name = None
         if agent_name_result.data:
             agent_name = agent_name_result.data[0].get("name")
+        images_map = _fetch_trip_images_map(supabase, [trip_id])
         
         return TripResponse(
             trip_id=updated_trip["trip_id"],
@@ -491,8 +625,9 @@ async def update_trip(
             available_seats=updated_trip["available_seats"],
             created_at=datetime.fromisoformat(updated_trip["created_at"].replace("Z", "+00:00")),
             agent_name=agent_name,
-            image_url=updated_trip.get("image_url"),
+            image_url=updated_trip.get("image_url") or (images_map.get(trip_id, [None])[0]),
             suitability=updated_trip.get("suitability"),
+            image_gallery=images_map.get(trip_id, []),
         )
     
     except HTTPException:

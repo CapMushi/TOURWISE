@@ -51,19 +51,19 @@ export default function TravelerQuestionnaire() {
               <RadioGroup value={formData.budget} onValueChange={(value) => setFormData({ ...formData, budget: value })}>
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="economy" id="budget1" />
-                  <Label htmlFor="budget1" className="font-normal cursor-pointer">Economy ($)</Label>
+                  <Label htmlFor="budget1" className="font-normal cursor-pointer">Economy (lower PKR range)</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="standard" id="budget2" />
-                  <Label htmlFor="budget2" className="font-normal cursor-pointer">Standard ($$)</Label>
+                  <Label htmlFor="budget2" className="font-normal cursor-pointer">Standard (mid PKR range)</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="premium" id="budget3" />
-                  <Label htmlFor="budget3" className="font-normal cursor-pointer">Premium ($$$)</Label>
+                  <Label htmlFor="budget3" className="font-normal cursor-pointer">Premium (higher PKR range)</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="luxury" id="budget4" />
-                  <Label htmlFor="budget4" className="font-normal cursor-pointer">Luxury ($$$$)</Label>
+                  <Label htmlFor="budget4" className="font-normal cursor-pointer">Luxury (top PKR range)</Label>
                 </div>
               </RadioGroup>
             </div>

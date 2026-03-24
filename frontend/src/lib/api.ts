@@ -45,6 +45,7 @@ export interface TripResponse {
   agent_name?: string;
   image_url?: string;
   suitability?: string;
+  image_gallery?: string[];
 }
 
 // API Error Response
@@ -137,6 +138,10 @@ async function apiClient<T>(
       ...options,
       headers,
     });
+
+    if (response.status === 204) {
+      return {} as T;
+    }
 
     // Handle non-JSON responses
     const contentType = response.headers.get("content-type");
@@ -253,6 +258,36 @@ export async function getTripById(tripId: number): Promise<TripResponse> {
   });
 }
 
+export interface TripImageResponse {
+  image_id: number;
+  trip_id: number;
+  image_url: string;
+  alt_text?: string;
+  sort_order: number;
+  is_cover: boolean;
+  created_at: string;
+}
+
+export interface CreateTripImageRequest {
+  image_url: string;
+  alt_text?: string;
+  sort_order?: number;
+  is_cover?: boolean;
+}
+
+export async function getTripImages(tripId: number): Promise<TripImageResponse[]> {
+  return apiClient<TripImageResponse[]>(`/api/trips/${tripId}/images`, {
+    method: "GET",
+  });
+}
+
+export async function createTripImage(tripId: number, data: CreateTripImageRequest): Promise<TripImageResponse> {
+  return apiClient<TripImageResponse>(`/api/trips/${tripId}/images`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 /**
  * Update trip details
  */
@@ -265,6 +300,120 @@ export async function updateTrip(tripId: number, data: UpdateTripRequest): Promi
     method: "PATCH",
     body: JSON.stringify(data),
   });
+}
+
+export interface FavoriteStatusResponse {
+  trip_id: number;
+  is_favorited: boolean;
+}
+
+export interface FavoriteTripItem {
+  favorite_id: number;
+  trip_id: number;
+  created_at: string;
+  trip?: TripResponse;
+}
+
+export async function getMyFavorites(): Promise<FavoriteTripItem[]> {
+  return apiClient<FavoriteTripItem[]>("/api/favorites", { method: "GET" });
+}
+
+export async function getFavoriteStatus(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}/status`, { method: "GET" });
+}
+
+export async function addFavorite(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}`, { method: "POST" });
+}
+
+export async function removeFavorite(tripId: number): Promise<FavoriteStatusResponse> {
+  return apiClient<FavoriteStatusResponse>(`/api/favorites/${tripId}`, { method: "DELETE" });
+}
+
+export interface NotificationPreferences {
+  user_id: string;
+  booking_updates: boolean;
+  payment_updates: boolean;
+  trip_reminders: boolean;
+  promotions: boolean;
+  agent_messages: boolean;
+  in_app_enabled: boolean;
+  email_enabled: boolean;
+  sms_enabled: boolean;
+  push_enabled: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  timezone?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type NotificationPreferencesUpdate = Partial<Omit<NotificationPreferences, "user_id" | "created_at" | "updated_at">>;
+
+export async function getNotificationPreferences(): Promise<NotificationPreferences> {
+  return apiClient<NotificationPreferences>("/api/notification-preferences", { method: "GET" });
+}
+
+export async function updateNotificationPreferences(
+  payload: NotificationPreferencesUpdate
+): Promise<NotificationPreferences> {
+  return apiClient<NotificationPreferences>("/api/notification-preferences", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** User profile (Supabase `profiles` + email from JWT) */
+export interface UserProfile {
+  id: string;
+  email?: string | null;
+  username?: string | null;
+  preferences?: Record<string, unknown> | null;
+  profile_details?: Record<string, unknown> | null;
+  updated_at?: string | null;
+}
+
+export type UserProfileUpdate = Partial<
+  Pick<UserProfile, "username" | "preferences" | "profile_details">
+>;
+
+export async function getUserProfile(): Promise<UserProfile> {
+  return apiClient<UserProfile>("/api/profile", { method: "GET" });
+}
+
+export async function updateUserProfile(payload: UserProfileUpdate): Promise<UserProfile> {
+  return apiClient<UserProfile>("/api/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Booking-related notifications for the current traveler */
+export interface BookingNotificationItem {
+  notification_id: number;
+  booking_id: number;
+  user_id: string;
+  notification_type: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export async function getMyBookingNotifications(): Promise<BookingNotificationItem[]> {
+  return apiClient<BookingNotificationItem[]>("/api/notifications", { method: "GET" });
+}
+
+export async function markBookingNotificationRead(
+  notificationId: number
+): Promise<BookingNotificationItem> {
+  return apiClient<BookingNotificationItem>(`/api/notifications/${notificationId}/read`, {
+    method: "PATCH",
+  });
+}
+
+export async function markAllBookingNotificationsRead(): Promise<void> {
+  await apiClient<Record<string, never>>("/api/notifications/read-all", { method: "POST" });
 }
 
 /**
@@ -291,26 +440,30 @@ export async function getTopAgents(limit: number = 4): Promise<TopAgentsResponse
 /**
  * Upload trip image to Supabase Storage
  */
+const tripImagesBucket =
+  (import.meta.env.VITE_SUPABASE_TRIP_IMAGES_BUCKET as string | undefined)?.trim() || "trip-images";
+
 export async function uploadTripImage(file: File, tripId: number): Promise<string> {
   const fileExt = file.name.split('.').pop();
   const fileName = `trip-${tripId}-${Date.now()}.${fileExt}`;
-  
-  const { data, error } = await supabase.storage
-    .from('trip-images')
-    .upload(fileName, file, {
-      cacheControl: '3600',
-      upsert: false
-    });
+
+  const { data, error } = await supabase.storage.from(tripImagesBucket).upload(fileName, file, {
+    cacheControl: "3600",
+    upsert: false,
+  });
 
   if (error) {
     console.error("[API] Error uploading image:", error);
-    throw new Error(`Failed to upload image: ${error.message}`);
+    const hint =
+      error.message?.toLowerCase().includes("bucket") || error.message?.toLowerCase().includes("not found")
+        ? ` Create a public bucket named "${tripImagesBucket}" in Supabase Storage (see backend/supabase/storage_trip_images_bucket.sql) or set VITE_SUPABASE_TRIP_IMAGES_BUCKET to your bucket name.`
+        : "";
+    throw new Error(`Failed to upload image: ${error.message}.${hint}`);
   }
 
-  // Get public URL
-  const { data: { publicUrl } } = supabase.storage
-    .from('trip-images')
-    .getPublicUrl(data.path);
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(tripImagesBucket).getPublicUrl(data.path);
 
   return publicUrl;
 }
@@ -622,5 +775,26 @@ export async function getUnreadMessageCount(): Promise<{ count: number }> {
   });
 }
 
+export async function markAgentConversationRead(otherAgentId: number): Promise<void> {
+  await apiClient<Record<string, never>>(
+    `/api/collaboration/messages/read?other_agent_id=${otherAgentId}`,
+    { method: "PATCH" }
+  );
+}
+
+export interface AgentNotificationFeedItem {
+  notification_id: string;
+  category: string;
+  title: string;
+  body: string;
+  created_at: string;
+}
+
+export async function getAgentNotificationFeed(limit = 30): Promise<AgentNotificationFeedItem[]> {
+  return apiClient<AgentNotificationFeedItem[]>(
+    `/api/collaboration/agent-notification-feed?limit=${limit}`,
+    { method: "GET" }
+  );
+}
 
 

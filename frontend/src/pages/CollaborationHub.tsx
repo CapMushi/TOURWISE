@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
@@ -35,6 +35,7 @@ import {
   getMessages,
   sendMessage,
   getUnreadMessageCount,
+  markAgentConversationRead,
   getMyTrips,
   type CollaborationTripFilters,
   type BusPoolingRequestCreate,
@@ -43,6 +44,7 @@ import {
 } from "@/lib/api";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { formatPkr } from "@/lib/currency";
 
 // Safe date formatter helper
 const formatDate = (dateString: string | undefined | null, formatStr: string = "MMM dd, yyyy HH:mm"): string => {
@@ -134,9 +136,9 @@ export default function CollaborationHub() {
 
   const { data: messages, error: messagesError } = useQuery({
     queryKey: ["messages", selectedAgent],
-    queryFn: () => getMessages(selectedAgent || undefined),
+    queryFn: () => getMessages(selectedAgent!),
     retry: 1,
-    enabled: !!selectedAgent || selectedAgent === null, // Only fetch if agent is selected or null
+    enabled: selectedAgent !== null,
     onError: (error) => {
       console.error("Error fetching messages:", error);
     },
@@ -150,6 +152,24 @@ export default function CollaborationHub() {
       console.error("Error fetching unread count:", error);
     },
   });
+
+  useEffect(() => {
+    if (selectedAgent === null) return;
+    let cancelled = false;
+    markAgentConversationRead(selectedAgent)
+      .then(() => {
+        if (cancelled) return;
+        queryClient.invalidateQueries({ queryKey: ["unread-count"] });
+        queryClient.invalidateQueries({ queryKey: ["messages", selectedAgent] });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAgent, queryClient]);
+
+  const pendingReceivedCount =
+    receivedRequests?.filter((r) => r && r.status === "pending").length ?? 0;
 
   // Mutations
   const createPoolingMutation = useMutation({
@@ -268,6 +288,39 @@ export default function CollaborationHub() {
             {unreadCount.count} unread {unreadCount.count === 1 ? "message" : "messages"}
           </Badge>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="glass-card border-0">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-heading">Pooling</CardTitle>
+            <CardDescription>Incoming requests needing your response</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold text-heading">{pendingReceivedCount}</p>
+            <p className="text-xs text-body-text mt-1">Open &quot;My Requests&quot; to approve or decline</p>
+          </CardContent>
+        </Card>
+        <Card className="glass-card border-0">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-heading">Messages</CardTitle>
+            <CardDescription>Unread from other agents</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold text-heading">{unreadCount?.count ?? 0}</p>
+            <p className="text-xs text-body-text mt-1">Opens a conversation marks it read</p>
+          </CardContent>
+        </Card>
+        <Card className="glass-card border-0">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-heading">Matching</CardTitle>
+            <CardDescription>Same route / date trips you can pool</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold text-heading">{matchingTrips?.length ?? 0}</p>
+            <p className="text-xs text-body-text mt-1">Use the Matching Trips tab to request pooling</p>
+          </CardContent>
+        </Card>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -403,7 +456,7 @@ export default function CollaborationHub() {
                           <strong>Arrival:</strong> {formatDate(trip.arrival_time, "MMM dd, yyyy HH:mm")}
                         </div>
                         <div>
-                          <strong>Price:</strong> ${trip.price || 0}
+                          <strong>Price:</strong> {formatPkr(trip.price ?? 0)}
                         </div>
                         <div>
                           <strong>Available Seats:</strong> {trip.available_seats || 0}

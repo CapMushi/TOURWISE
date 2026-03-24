@@ -1,5 +1,6 @@
 import { Star, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { formatPkr } from "@/lib/currency";
 
 interface TripCardProps {
   image: string;
@@ -58,9 +59,9 @@ export function TripCard({
         <div className="flex items-center justify-between pt-2">
           <div>
             <span className="text-2xl font-heading font-bold text-primary">
-              ${price}
+              {formatPkr(price)}
             </span>
-            <span className="text-sm text-body-text"> /person</span>
+            <span className="text-sm text-body-text"> /person (PKR)</span>
           </div>
           <Button size="sm" variant="outline">View Details</Button>
         </div>

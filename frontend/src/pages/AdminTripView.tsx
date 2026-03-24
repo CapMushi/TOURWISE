@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Check, X } from "lucide-react";
 import { toast } from "sonner";
 import heroImage from "@/assets/hero-tropical.jpg";
+import { formatPkr } from "@/lib/currency";
 
 export default function AdminTripView() {
   const navigate = useNavigate();
@@ -61,8 +62,10 @@ export default function AdminTripView() {
               <CardTitle className="font-heading">💰 Pricing and Inclusions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-xl font-bold text-primary">$250 per person</p>
-              <p><span className="font-medium">Single Occupancy:</span> +$80</p>
+              <p className="text-xl font-bold text-primary">{formatPkr(70_000)} per person</p>
+              <p>
+                <span className="font-medium">Single occupancy:</span> +{formatPkr(22_400)}
+              </p>
               
               <div>
                 <h4 className="font-medium mb-2">Inclusions:</h4>
@@ -127,9 +130,9 @@ export default function AdminTripView() {
               <div>
                 <h4 className="font-medium mb-2">Carpooling Options:</h4>
                 <ul className="space-y-1 ml-4">
-                  <li>• Passenger Option: $250 (need a ride)</li>
-                  <li>• Driver Option: $220 (drive and take passengers)</li>
-                  <li>• Self-Drive Option: $235 (drive alone)</li>
+                  <li>• Passenger option: {formatPkr(70_000)} (need a ride)</li>
+                  <li>• Driver option: {formatPkr(61_600)} (drive and take passengers)</li>
+                  <li>• Self-drive option: {formatPkr(65_800)} (drive alone)</li>
                 </ul>
               </div>
               

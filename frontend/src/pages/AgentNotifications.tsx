@@ -1,58 +1,104 @@
-import { Bell, MessageSquare, Eye } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { formatDistanceToNow } from "date-fns";
+import { useNavigate } from "react-router-dom";
+import { Bell, Bus, CalendarDays, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { getAgentNotificationFeed, type AgentNotificationFeedItem } from "@/lib/api";
 
-const notifications = [
-  {
-    id: 1,
-    icon: MessageSquare,
-    message: "Jane Doe has booked 'Weekend Mountain Hiking Retreat'.",
-    time: "2 hours ago",
-  },
-  {
-    id: 2,
-    icon: MessageSquare,
-    message: "You have 3 new messages in the Collaboration Hub.",
-    time: "5 hours ago",
-  },
-  {
-    id: 3,
-    icon: Eye,
-    message: "Your listing 'Coastal Getaway' has 5 new views.",
-    time: "1 day ago",
-  },
-  {
-    id: 4,
-    icon: MessageSquare,
-    message: "Bob Smith requested more details about 'Safari Adventure'.",
-    time: "2 days ago",
-  },
-];
+function categoryIcon(category: string) {
+  switch (category) {
+    case "pooling":
+      return Bus;
+    case "booking":
+      return CalendarDays;
+    case "message":
+      return MessageSquare;
+    default:
+      return Bell;
+  }
+}
 
 export default function AgentNotifications() {
+  const navigate = useNavigate();
+  const { data: items = [], isLoading, error } = useQuery({
+    queryKey: ["agent-notification-feed"],
+    queryFn: () => getAgentNotificationFeed(40),
+  });
+
+  const openCollaboration = (item: AgentNotificationFeedItem) => {
+    if (item.category === "pooling" || item.category === "message") {
+      navigate("/agent/collaboration");
+    } else {
+      navigate("/agent/manage-trips");
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center gap-3 mb-8">
         <Bell className="h-8 w-8 text-primary" />
-        <h1 className="text-4xl font-heading font-bold text-heading">Notifications</h1>
+        <div>
+          <h1 className="text-4xl font-heading font-bold text-heading">Notifications</h1>
+          <p className="text-sm text-body-text mt-1">
+            Pooling requests, new bookings on your trips, and unread messages
+          </p>
+        </div>
       </div>
 
       <div className="glass-card p-6 space-y-4">
-        {notifications.map((notification) => {
-          const Icon = notification.icon;
-          return (
-            <div
-              key={notification.id}
-              className="flex items-start gap-4 p-4 rounded-lg hover:bg-white/30 transition-colors"
-            >
-              <div className="mt-1">
-                <Icon className="h-5 w-5 text-primary" />
+        {isLoading && (
+          <div className="space-y-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-20 w-full" />
+            ))}
+          </div>
+        )}
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {(error as Error).message || "Could not load notifications"}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!isLoading && !error && items.length === 0 && (
+          <p className="text-body-text text-center py-12">
+            You&apos;re all caught up. New booking activity and pooling requests will show here.
+          </p>
+        )}
+
+        {!isLoading &&
+          items.map((notification) => {
+            const Icon = categoryIcon(notification.category);
+            return (
+              <div
+                key={notification.notification_id}
+                className="flex flex-col sm:flex-row sm:items-start gap-4 p-4 rounded-lg hover:bg-white/30 transition-colors border border-transparent hover:border-white/20"
+              >
+                <div className="mt-1">
+                  <Icon className="h-5 w-5 text-primary shrink-0" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-heading font-semibold text-heading">{notification.title}</p>
+                  <p className="text-body-text text-sm mt-1">{notification.body}</p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => openCollaboration(notification)}
+                >
+                  {notification.category === "booking" ? "Manage trips" : "Open hub"}
+                </Button>
               </div>
-              <div className="flex-1">
-                <p className="text-body-text">{notification.message}</p>
-                <p className="text-sm text-muted-foreground mt-1">{notification.time}</p>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
     </div>
   );

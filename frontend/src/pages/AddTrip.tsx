@@ -284,14 +284,14 @@ export default function AddTrip() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="price">
-                  Price (per person) <span className="text-red-500">*</span>
+                  Price per person (PKR) <span className="text-red-500">*</span>
                 </Label>
                 <Input
                   id="price"
                   type="number"
                   step="0.01"
                   min="0.01"
-                  placeholder="e.g., 250.00"
+                  placeholder="e.g., 75000"
                   value={formData.price || ""}
                   onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
                   className="glass-panel border-white/30"

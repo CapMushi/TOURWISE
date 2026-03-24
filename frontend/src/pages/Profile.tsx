@@ -1,29 +1,52 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { getUserProfile } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const travelStyles = [
   "Adventure",
   "Relaxation",
   "Cultural",
   "Family-Friendly",
-  "Luxury"
+  "Luxury",
 ];
+
+function initialsFromUser(username: string | null | undefined, email: string | null | undefined) {
+  const u = username?.trim();
+  if (u) {
+    const parts = u.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase().slice(0, 2);
+    return u.slice(0, 2).toUpperCase();
+  }
+  const e = email?.trim();
+  if (e && e.length >= 2) return e.slice(0, 2).toUpperCase();
+  return "TW";
+}
 
 export default function Profile() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [selectedStyles, setSelectedStyles] = useState<string[]>(["Adventure", "Cultural"]);
   const [budget, setBudget] = useState("Mid-Range");
 
+  const { data: profile, isLoading } = useQuery({
+    queryKey: ["user-profile"],
+    queryFn: getUserProfile,
+  });
+
+  const displayEmail = profile?.email ?? user?.email ?? "";
+  const displayName = profile?.username?.trim() || user?.email?.split("@")[0] || "Traveler";
+
   const toggleStyle = (style: string) => {
     setSelectedStyles((prev) =>
-      prev.includes(style)
-        ? prev.filter((s) => s !== style)
-        : [...prev, style]
+      prev.includes(style) ? prev.filter((s) => s !== style) : [...prev, style]
     );
   };
 
@@ -32,33 +55,38 @@ export default function Profile() {
       <h1 className="font-heading text-4xl font-bold text-heading mb-8">My Profile</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column */}
         <div className="space-y-6">
-          {/* Personal Information Card */}
           <Card className="glass-card border-0">
             <CardHeader>
               <CardTitle className="font-heading">Personal Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-col items-center space-y-4">
-                <Avatar className="h-24 w-24">
-                  <AvatarImage src="/placeholder.svg" alt="Profile picture" />
-                  <AvatarFallback className="text-2xl font-heading bg-primary text-primary-foreground">
-                    AD
-                  </AvatarFallback>
-                </Avatar>
-                <div className="text-center">
-                  <h3 className="font-heading font-bold text-xl text-heading">Alex Doe</h3>
-                  <p className="text-body-text">alex.doe@email.com</p>
+              {isLoading ? (
+                <div className="flex flex-col items-center space-y-4">
+                  <Skeleton className="h-24 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-40" />
+                  <Skeleton className="h-4 w-56" />
                 </div>
-              </div>
-              <Button variant="secondary" className="w-full">
+              ) : (
+                <div className="flex flex-col items-center space-y-4">
+                  <Avatar className="h-24 w-24">
+                    <AvatarImage src="/placeholder.svg" alt="Profile picture" />
+                    <AvatarFallback className="text-2xl font-heading bg-primary text-primary-foreground">
+                      {initialsFromUser(profile?.username, displayEmail)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="text-center">
+                    <h3 className="font-heading font-bold text-xl text-heading">{displayName}</h3>
+                    <p className="text-body-text">{displayEmail}</p>
+                  </div>
+                </div>
+              )}
+              <Button variant="secondary" className="w-full" onClick={() => navigate("/profile/edit")}>
                 Edit Profile
               </Button>
             </CardContent>
           </Card>
 
-          {/* Account Security Card */}
           <Card className="glass-card border-0">
             <CardHeader>
               <CardTitle className="font-heading">Account Security</CardTitle>
@@ -69,21 +97,15 @@ export default function Profile() {
           </Card>
         </div>
 
-        {/* Right Column */}
         <div>
           <Card className="glass-card border-0">
             <CardHeader>
               <CardTitle className="font-heading">Your Travel Preferences</CardTitle>
-              <CardDescription>
-                Help our AI find the perfect trips for you.
-              </CardDescription>
+              <CardDescription>Help our AI find the perfect trips for you.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Preferred Travel Styles */}
               <div className="space-y-3">
-                <label className="text-sm font-medium text-heading">
-                  I enjoy trips that are...
-                </label>
+                <label className="text-sm font-medium text-heading">I enjoy trips that are...</label>
                 <div className="flex flex-wrap gap-2">
                   {travelStyles.map((style) => (
                     <Badge
@@ -102,11 +124,8 @@ export default function Profile() {
                 </div>
               </div>
 
-              {/* Average Budget */}
               <div className="space-y-3">
-                <label className="text-sm font-medium text-heading">
-                  My typical budget is...
-                </label>
+                <label className="text-sm font-medium text-heading">My typical budget is...</label>
                 <Select value={budget} onValueChange={setBudget}>
                   <SelectTrigger>
                     <SelectValue />
@@ -119,12 +138,10 @@ export default function Profile() {
                 </Select>
               </div>
 
-              {/* Save Button */}
               <Button className="w-full">Save Preferences</Button>
 
-              {/* Update Preferences Button */}
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="w-full mt-2"
                 onClick={() => navigate("/update-preferences")}
               >

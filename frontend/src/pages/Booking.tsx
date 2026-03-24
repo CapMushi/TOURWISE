@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getTripById, createBooking, type CreateBookingRequest, type PassengerInfo } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { formatPkr } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Booking() {
@@ -239,8 +240,8 @@ export default function Booking() {
                 <span className="font-medium">{trip.origin_city} → {trip.destination_city}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-body-text">Price per person:</span>
-                <span className="font-medium">${pricePerSeat.toFixed(2)}</span>
+                <span className="text-body-text">Price per person (PKR):</span>
+                <span className="font-medium">{formatPkr(pricePerSeat)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-body-text">Available Seats:</span>
@@ -277,8 +278,8 @@ export default function Booking() {
                 </Button>
               </div>
               <div className="border-t border-border pt-4">
-                <p className="text-sm text-body-text mb-1">Total Price:</p>
-                <p className="text-3xl font-bold text-primary">${totalPrice.toFixed(2)}</p>
+                <p className="text-sm text-body-text mb-1">Total (PKR):</p>
+                <p className="text-3xl font-bold text-primary">{formatPkr(totalPrice)}</p>
               </div>
             </CardContent>
           </Card>
@@ -429,8 +430,8 @@ export default function Booking() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex justify-between">
-                <span className="text-body-text">Price per seat:</span>
-                <span>${pricePerSeat.toFixed(2)}</span>
+                <span className="text-body-text">Price per seat (PKR):</span>
+                <span>{formatPkr(pricePerSeat)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-body-text">Number of seats:</span>
@@ -438,7 +439,7 @@ export default function Booking() {
               </div>
               <div className="border-t border-border pt-4 flex justify-between">
                 <span className="text-lg font-semibold">Total:</span>
-                <span className="text-2xl font-bold text-primary">${totalPrice.toFixed(2)}</span>
+                <span className="text-2xl font-bold text-primary">{formatPkr(totalPrice)}</span>
               </div>
               <p className="text-sm text-body-text">
                 Payment will be processed automatically upon confirmation.

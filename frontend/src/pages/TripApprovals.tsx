@@ -4,12 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Eye } from "lucide-react";
+import { formatPkr } from "@/lib/currency";
 
 const pendingTrips = [
-  { id: 1, tripName: "Himalayan Sunrise Trek", agentName: "TravelCo Adventures", submissionDate: "2025-11-20", price: "$350" },
-  { id: 2, tripName: "Paris Culinary Experience", agentName: "Wanderlust Travels", submissionDate: "2025-11-22", price: "$1,200" },
-  { id: 3, tripName: "Safari Adventure Kenya", agentName: "Globe Treks", submissionDate: "2025-11-25", price: "$2,500" },
-  { id: 4, tripName: "Tokyo Night Tours", agentName: "Journey Makers", submissionDate: "2025-11-27", price: "$450" },
+  { id: 1, tripName: "Himalayan Sunrise Trek", agentName: "TravelCo Adventures", submissionDate: "2025-11-20", pricePkr: 98_000 },
+  { id: 2, tripName: "Paris Culinary Experience", agentName: "Wanderlust Travels", submissionDate: "2025-11-22", pricePkr: 336_000 },
+  { id: 3, tripName: "Safari Adventure Kenya", agentName: "Globe Treks", submissionDate: "2025-11-25", pricePkr: 700_000 },
+  { id: 4, tripName: "Tokyo Night Tours", agentName: "Journey Makers", submissionDate: "2025-11-27", pricePkr: 126_000 },
 ];
 
 export default function TripApprovals() {
@@ -39,7 +40,7 @@ export default function TripApprovals() {
                   <TableHead>Trip Name</TableHead>
                   <TableHead>Agent Name</TableHead>
                   <TableHead>Submission Date</TableHead>
-                  <TableHead>Price</TableHead>
+                  <TableHead>Price (PKR)</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -56,7 +57,7 @@ export default function TripApprovals() {
                       <TableCell className="font-medium">{trip.tripName}</TableCell>
                       <TableCell>{trip.agentName}</TableCell>
                       <TableCell>{trip.submissionDate}</TableCell>
-                      <TableCell>{trip.price}</TableCell>
+                      <TableCell>{formatPkr(trip.pricePkr)}</TableCell>
                       <TableCell className="text-right">
                         <Button
                           size="sm"

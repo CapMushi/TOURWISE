@@ -1,68 +1,22 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getTopAgents } from "@/lib/api";
-import { Search, Calendar as CalendarIcon, MapPin, DollarSign, Bus, Users, Heart } from "lucide-react";
+import { getTopAgents, getTrips } from "@/lib/api";
+import { splitHomeTrips } from "@/lib/tripSections";
+import { Search, Calendar as CalendarIcon, MapPin, Banknote, Bus, Users, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { TripCard } from "@/components/TripCard";
+import { TripCardFlexible } from "@/components/TripCardFlexible";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Footer } from "@/components/layout/Footer";
+import { PRICE_INPUT_PREFIX_LABEL } from "@/lib/currency";
 import { Skeleton } from "@/components/ui/skeleton";
 import heroImage from "@/assets/hero-tropical.jpg";
-import parisImage from "@/assets/trip-paris.jpg";
-import peruImage from "@/assets/trip-peru.jpg";
-import japanImage from "@/assets/trip-japan.jpg";
-import safariImage from "@/assets/trip-safari.jpg";
-
-const aiRecommendations = [
-  {
-    id: 1,
-    image: parisImage,
-    title: "Romantic Paris Getaway",
-    destination: "Paris, France",
-    agent: "Sophie Laurent",
-    price: 2499,
-    rating: 4.9,
-    duration: "7 days"
-  },
-  {
-    id: 2,
-    image: peruImage,
-    title: "Machu Picchu Adventure",
-    destination: "Cusco, Peru",
-    agent: "Carlos Rodriguez",
-    price: 1899,
-    rating: 4.8,
-    duration: "10 days"
-  },
-  {
-    id: 3,
-    image: japanImage,
-    title: "Cultural Japan Experience",
-    destination: "Tokyo & Kyoto",
-    agent: "Yuki Tanaka",
-    price: 3299,
-    rating: 5.0,
-    duration: "14 days"
-  },
-  {
-    id: 4,
-    image: safariImage,
-    title: "African Safari Expedition",
-    destination: "Serengeti, Tanzania",
-    agent: "David Mbeki",
-    price: 4199,
-    rating: 4.9,
-    duration: "12 days"
-  },
-];
-
 export default function TravelerHome() {
   const navigate = useNavigate();
   const [province, setProvince] = useState("");
@@ -79,6 +33,13 @@ export default function TravelerHome() {
     queryKey: ["top-agents"],
     queryFn: () => getTopAgents(4),
   });
+
+  const { data: tripsData, isLoading: tripsLoading } = useQuery({
+    queryKey: ["home-trips"],
+    queryFn: () => getTrips(),
+  });
+
+  const { recommendations, trending } = splitHomeTrips(tripsData?.trips ?? []);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,17 +205,19 @@ export default function TravelerHome() {
               {/* Price Range From */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-heading flex items-center gap-2">
-                  <DollarSign className="h-4 w-4" />
-                  Price Range From
+                  <Banknote className="h-4 w-4" />
+                  Price range from (PKR)
                 </Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                    {PRICE_INPUT_PREFIX_LABEL}
+                  </span>
                   <Input
                     type="number"
                     placeholder="0"
                     value={priceFrom}
                     onChange={(e) => setPriceFrom(e.target.value)}
-                    className="bg-white/80 pl-7"
+                    className="bg-white/80 pl-12"
                     min="0"
                     step="1"
                   />
@@ -264,17 +227,19 @@ export default function TravelerHome() {
               {/* Price Range To */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-heading flex items-center gap-2">
-                  <DollarSign className="h-4 w-4" />
-                  Price Range To
+                  <Banknote className="h-4 w-4" />
+                  Price range to (PKR)
                 </Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                    {PRICE_INPUT_PREFIX_LABEL}
+                  </span>
                   <Input
                     type="number"
-                    placeholder="10000"
+                    placeholder="500000"
                     value={priceTo}
                     onChange={(e) => setPriceTo(e.target.value)}
-                    className="bg-white/80 pl-7"
+                    className="bg-white/80 pl-12"
                     min={priceFrom || "0"}
                     step="1"
                   />
@@ -347,28 +312,60 @@ export default function TravelerHome() {
       </section>
 
       <div className="max-w-7xl mx-auto px-4 py-12 space-y-16">
-        {/* AI Recommendations */}
+        {/* AI Recommendations (live trips: soonest departures with availability) */}
         <section>
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             AI-Powered Recommendations For You
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {aiRecommendations.map((trip) => (
-              <TripCard key={trip.id} {...trip} onClick={() => navigate(`/trip/${trip.id}`)} />
-            ))}
-          </div>
+          {tripsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-[420px] w-full" />
+              ))}
+            </div>
+          ) : recommendations.length === 0 ? (
+            <div className="glass-card p-8 text-center text-body-text">
+              No trips to recommend yet. Try a search or check back when agents publish new listings.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {recommendations.map((trip) => (
+                <TripCardFlexible
+                  key={trip.trip_id}
+                  trip={trip}
+                  onClick={() => navigate(`/trip/${trip.trip_id}`)}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* Trending Destinations */}
+        {/* Trending Destinations (newest listings) */}
         <section>
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             Trending Destinations
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {aiRecommendations.slice(0, 4).map((trip) => (
-              <TripCard key={trip.id} {...trip} onClick={() => navigate(`/trip/${trip.id}`)} />
-            ))}
-          </div>
+          {tripsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-[420px] w-full" />
+              ))}
+            </div>
+          ) : trending.length === 0 ? (
+            <div className="glass-card p-8 text-center text-body-text">
+              No trending trips yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {trending.map((trip) => (
+                <TripCardFlexible
+                  key={trip.trip_id}
+                  trip={trip}
+                  onClick={() => navigate(`/trip/${trip.trip_id}`)}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Top Rated Agents */}

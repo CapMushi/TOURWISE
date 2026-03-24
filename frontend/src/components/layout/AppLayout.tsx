@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { ChatBot } from "@/components/ChatBot";
+import { UsernameNudge } from "./UsernameNudge";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -18,6 +19,7 @@ export function AppLayout({ children, userRole }: AppLayoutProps) {
             <SidebarTrigger />
           </header>
           <main className="flex-1 overflow-auto">
+            {userRole === "traveler" && <UsernameNudge />}
             {children}
           </main>
         </div>
