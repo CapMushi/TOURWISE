@@ -69,6 +69,14 @@ export default function TripDetails() {
 
   const handleFavoriteToggle = async () => {
     if (!tripIdNum) return;
+    if (trip?.source === "external") {
+      toast({
+        variant: "destructive",
+        title: "Not available",
+        description: "Wishlist is not available for external partner trips.",
+      });
+      return;
+    }
     try {
       if (favoriteStatus?.is_favorited) {
         await removeFavorite(tripIdNum);
@@ -434,9 +442,18 @@ export default function TripDetails() {
                   {trip.available_seats === 0 ? "Fully Booked" : "Book Now"}
                 </Button>
 
-                <Button variant="secondary" className="w-full" onClick={handleFavoriteToggle}>
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={handleFavoriteToggle}
+                  disabled={trip.source === "external"}
+                >
                   <Heart className={`h-4 w-4 mr-2 ${favoriteStatus?.is_favorited ? "fill-current" : ""}`} />
-                  {favoriteStatus?.is_favorited ? "Remove from Wishlist" : "Add to Wishlist"}
+                  {trip.source === "external"
+                    ? "Wishlist (external trips)"
+                    : favoriteStatus?.is_favorited
+                      ? "Remove from Wishlist"
+                      : "Add to Wishlist"}
                 </Button>
               </CardContent>
             </Card>

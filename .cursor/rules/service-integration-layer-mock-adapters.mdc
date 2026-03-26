@@ -1,0 +1,214 @@
+---
+name: "Service Integration Layer – Mock Providers + Adapters"
+description: "Guide for integrating external travel-agent sources via adapters and mock APIs while keeping the UI and DB in canonical TourWise JSON."
+when:
+  - always: false
+targets:
+  - type: workspace
+    pattern: "**"
+---
+
+## Purpose
+
+TourWise supports two *sources* of trip supply:
+- **Local agents**: agents who sign up inside TourWise and create trips in our Supabase tables (current implementation).
+- **External agents**: partner/existing agents whose trips come from their own systems via a **Service Integration Layer (SIL)**.
+
+External agents can return data in different formats. **Never allow vendor-specific formats past the SIL.**
+All external responses must be converted into **canonical TourWise JSON** *before* reaching:
+- the frontend UI, or
+- the TourWise database (if/when we persist external inventory).
+
+This rule defines the minimal-change, optimal workflow:
+- **Unify trip listing UX** (same UI for local + external trips).
+- **Branch only at booking time** (same booking UI; backend decides local vs external).
+- Use **mock providers** until partner keys are available.
+
+
+## Canonical data contract (what the frontend should see)
+
+Trips returned by the backend should be in the same TourWise shape currently expected by the frontend (`TripResponse` / `TripListResponse`).
+Add *only the minimum metadata* needed to drive branching:
+- `source`: `"local"` | `"external"`
+- `provider_id`: stable string identifying the external provider (e.g., `"mock_vendor_a"`)
+- `external_ref`: provider’s trip identifier (string)
+
+Guidance:
+- Keep existing fields (`trip_id`, `price`, `available_seats`, etc.) for UI compatibility.
+- For external trips, `trip_id` may be a **synthetic id** (see Implementation Strategy).
+- Do not leak raw vendor fields into API responses.
+
+
+## Implementation strategy (minimal changes, optimal separation)
+
+### 1) Add a backend Integration Layer (Adapters)
+
+Create a small adapter interface and a registry:
+- Adapter is responsible for:
+  - calling provider endpoints (mock now, real later)
+  - validating/parsing provider payloads
+  - mapping provider payload → canonical TourWise DTOs
+- Router is responsible for:
+  - selecting an adapter based on `provider_id`
+  - returning canonical JSON to callers
+
+Suggested structure:
+- `backend/app/integrations/base.py`
+  - `TripDTO` (canonical for SIL; close to existing `TripResponse`)
+  - `BookingQuoteDTO` (optional)
+  - `ExternalProviderAdapter` (interface)
+- `backend/app/integrations/registry.py`
+  - `get_adapter(provider_id) -> ExternalProviderAdapter`
+- `backend/app/integrations/providers/mock_vendor_a.py`
+  - hardcoded mock payload(s) in vendor format
+  - mapping into canonical DTOs
+
+### 2) Expose mock provider endpoints (backend)
+
+Add a router like:
+- `backend/app/api/integrations.py`
+  - `GET /api/integrations/{provider_id}/trips` (returns canonical TourWise trips)
+  - `GET /api/integrations/{provider_id}/trips/{external_ref}` (canonical details)
+  - (Optional) `POST /api/integrations/{provider_id}/bookings` (mock reserve/confirm)
+
+### 3) Unify search results (preferred)
+
+Preferred minimal-frontend approach: keep frontend calls unchanged by unifying under existing endpoints:
+- Update `backend/app/api/trips.py`:
+  - `GET /api/trips` returns:
+    - DB trips (`source="local"`)
+    - plus adapter trips (`source="external"`, `provider_id`, `external_ref`)
+  - `GET /api/trips/{trip_id}`:
+    - if `trip_id` is local → fetch from DB (current logic)
+    - if `trip_id` is synthetic external → route to adapter and return canonical details
+
+Alternative (simpler backend, slightly more frontend/demo work):
+- keep `GET /api/trips` local-only
+- expose external trips via `/api/integrations/...`
+- add a small “Integrations Demo” page in the frontend that calls the integrations endpoints
+
+### 4) Branch the booking workflow (critical deviation point)
+
+Keep the frontend booking flow unchanged:
+- UI still calls `POST /api/bookings/` with `{ trip_id, number_of_seats, ... }`
+
+Update `backend/app/api/bookings.py` with a **clear branch** (local path stays as close to current code as possible):
+
+**Local trip** (unchanged behavior):
+- Resolve trip from `public.trips`
+- Validate `available_seats`, insert `booking`, `booking_passengers`, `payments`, `booking_notifications`, decrement `trips.available_seats` — same as today.
+
+**External trip** (new path; order matters):
+1. Call the **adapter/mock provider first** and treat its response as “website confirmation” (success/failure, provider booking ref, etc.).
+2. **Only if the provider confirms**, persist in TourWise DB so the platform records that the booking was made **through TourWise**.
+3. Return a **canonical `BookingResponse`** (same shape as local) so the UI does not need special cases.
+
+Important constraints:
+- External booking must **never** decrement `public.trips.available_seats` for trips that are not TourWise-owned inventory (external supply lives outside `trips`).
+- Do **not** use the local-only trip fetch path for external synthetic ids unless you have mirrored rows; prefer resolving `{provider_id, external_ref}` from the synthetic `trip_id` mapping.
+- Prefer explicit branching on `source` / `provider_id` / synthetic id range rather than implicit heuristics.
+
+**Local booking workflow**: no refactors required beyond extracting shared helpers if useful; the external branch is **additive**.
+
+
+## Trip identity strategy (recommended)
+
+Goal: allow existing frontend routes (`/trip/:tripId`, `/booking/:id`) to work.
+
+Options:
+- **Synthetic `trip_id` range**:
+  - local trips are positive integers from DB
+  - external trips use a reserved high range or negative values (e.g., `-1`, `-2`, ...)
+  - backend interprets these ids and maps to `{provider_id, external_ref}`
+- **Encoded id**:
+  - keep `trip_id` numeric for UI compatibility, but maintain a reversible mapping server-side
+
+For minimal UI changes, prefer **synthetic numeric ids** and keep `provider_id/external_ref` in the response for traceability.
+
+
+## Database: external bookings (preferred approach)
+
+**Product requirement discussed:** External bookings **must be stored** in TourWise after the mock/provider returns confirmation, so there is an auditable record that the user booked through our platform.
+
+### Preferred: Option 1 — separate tables (recommended)
+
+Use dedicated tables for external supply and external bookings instead of stuffing external trips into `public.trips`.
+
+**Why prefer this:**
+- `trips` + `available_seats` stay **TourWise-local inventory**; external seat counts are authoritative on the provider side.
+- Avoids FK pressure: `booking.trip_id` today implies a row in `trips`; external listings may not exist there.
+- Local `POST /api/bookings/` logic can remain **intact**; external path writes only to `external_*` tables.
+
+**Typical tables (names illustrative; align with migrations):**
+- `external_trip_snapshots` (optional but useful): canonical snapshot at search time (`provider_id`, `external_ref`, price, seats, route fields, JSON snapshot for audit).
+- `external_bookings`: `user_id`, `provider_id`, `external_ref`, `number_of_seats`, `total_price`, `status`, `booking_reference` (TourWise-facing), `provider_confirmation_ref`, `confirmed_at`, payload/metadata JSON.
+- `external_booking_passengers` (mirror of `booking_passengers` shape if needed).
+- `external_payments` (optional; or one JSON column on `external_bookings` for demo).
+
+### Alternative: Option 2 — mirror external trips into `trips`
+
+Insert external listings into `public.trips` so `booking.trip_id` FK still works; **never** decrement `available_seats` for those rows (or maintain a provenance flag).
+
+**When to use:** hard constraint of “no new tables” — otherwise **prefer Option 1**.
+
+### My Bookings / list endpoint
+
+Today `GET /api/bookings` reads from `booking` only. With Option 1 you **must merge**:
+- query `booking` (local) and `external_bookings` (external) for the current user,
+- map external rows into the same **`BookingResponse`** shape (or extend with optional `source` field),
+- sort by date if both are returned.
+
+Frontend `MyBookings` can stay unchanged if the API returns a single unified list.
+
+### Demo modes (clarification)
+
+- **Swagger-only, no persistence:** still valid for a pure adapter demo, but **not** sufficient if the requirement is “prove booking was recorded on our side.”
+- **Full demo with DB proof:** implement external branch + `external_*` inserts **after** mock confirm + merged `GET /api/bookings`.
+
+
+## What files will be created/modified (expected)
+
+### Backend — new files
+- `backend/app/integrations/base.py`
+- `backend/app/integrations/registry.py`
+- `backend/app/integrations/providers/mock_vendor_a.py` (and more providers as needed)
+- `backend/app/api/integrations.py`
+
+### Backend — modified files
+- `backend/app/main.py` (include integrations router)
+- `backend/app/api/trips.py` (optional but preferred: unify local + external in `GET /api/trips`)
+- `backend/app/api/bookings.py`: branch `POST /` (local unchanged; external = adapter confirm → persist `external_*` → unified `BookingResponse`); **merge** `GET /` list from `booking` + `external_bookings`
+
+### Database / Supabase (when persisting external bookings)
+- New migration SQL (or Supabase dashboard) for `external_bookings` (+ related tables as above).
+- Update `backend/supabase/schema_reference.sql` and `.cursor/rules/database-schema.mdc` when tables are real.
+
+### Frontend — modified files (optional)
+- `frontend/src/App.tsx` (only if adding an explicit demo route/page)
+- `frontend/src/lib/api.ts` (only if adding new API calls for integrations endpoints)
+
+
+## Evaluator/demo checklist (what to show)
+
+Show that:
+- External vendor payload is converted **inside adapter** into canonical TourWise JSON.
+- Search results show both:
+  - local trips (from DB)
+  - external trips (from mock provider)
+- Booking uses the **same UI** (`POST /api/bookings/`):
+  - **Local:** existing tables + seat decrement on `trips`.
+  - **External:** adapter/mock confirms first → then **insert into `external_*`** → return canonical `BookingResponse` (e.g. `booking_reference` prefix like `EXT-` or distinct from `TW-`).
+- **My Bookings:** after an external booking, `GET /api/bookings` returns it alongside local bookings (merged list).
+
+Recommended demo path:
+- `/docs`: `GET /api/trips` (mixed sources), `POST /api/bookings` for external id, `GET /api/bookings` shows new row.
+- Optional: same flow in UI without frontend branching on `source` if responses are unified.
+
+
+## Non-negotiable rules (keep the architecture clean)
+
+- Do not expose vendor-specific response shapes to the frontend.
+- Keep adapter logic isolated under `backend/app/integrations/`.
+- **External booking persistence:** write to TourWise DB **only after** successful mock/provider confirmation; never treat adapter success as optional if the product requirement is an audit trail.
+- Prefer **separate `external_*` tables** over overloading `trips`/`booking` unless explicitly constrained.
+- Keep existing UI routes and pages working without branching logic in the frontend (unified API responses).

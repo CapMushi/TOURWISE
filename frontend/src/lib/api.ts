@@ -47,6 +47,10 @@ export interface TripResponse {
   is_tour_package?: boolean;
   suitability?: string;
   image_gallery?: string[];
+  /** local = Supabase trips; external = integration layer (synthetic trip_id) */
+  source?: "local" | "external";
+  provider_id?: string | null;
+  external_ref?: string | null;
 }
 
 // API Error Response
@@ -70,6 +74,14 @@ export interface RegisterAsAgentResponse {
 export interface TripListResponse {
   trips: TripResponse[];
   total: number;
+}
+
+export interface RecommendationsResponse {
+  trips: TripResponse[];
+  total: number;
+  ai_used: boolean;
+  fallback_used: boolean;
+  summary?: string | null;
 }
 
 // Search filters for trips
@@ -237,6 +249,17 @@ export async function getTrips(filters?: TripSearchFilters): Promise<TripListRes
   const endpoint = `/api/trips${queryString ? `?${queryString}` : ""}`;
   
   return apiClient<TripListResponse>(endpoint, {
+    method: "GET",
+  });
+}
+
+export async function getRecommendations(limit: number = 4, userQuery?: string): Promise<RecommendationsResponse> {
+  const params = new URLSearchParams();
+  params.append("limit", String(limit));
+  if (userQuery && userQuery.trim()) {
+    params.append("user_query", userQuery.trim());
+  }
+  return apiClient<RecommendationsResponse>(`/api/recommendations?${params.toString()}`, {
     method: "GET",
   });
 }
@@ -569,6 +592,8 @@ export interface BookingResponse {
     price: number;
   };
   agent_name?: string;
+  /** local = public.booking; external = public.external_bookings */
+  booking_source?: "local" | "external";
 }
 
 /**

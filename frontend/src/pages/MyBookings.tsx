@@ -211,7 +211,10 @@ export default function MyBookings() {
       ) : (
         <div className="space-y-4">
           {filteredBookings.map((booking) => (
-            <Card key={booking.booking_id} className="glass-card border-0">
+            <Card
+              key={`${booking.booking_source ?? "local"}-${booking.booking_id}`}
+              className="glass-card border-0"
+            >
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
@@ -220,6 +223,11 @@ export default function MyBookings() {
                     </CardTitle>
                     <CardDescription className="mt-1">
                       Booking Reference: <span className="font-mono font-semibold">{booking.booking_reference}</span>
+                      {booking.booking_source === "external" && (
+                        <Badge variant="outline" className="ml-2">
+                          Partner trip
+                        </Badge>
+                      )}
                     </CardDescription>
                   </div>
                   {getStatusBadge(booking.status)}

@@ -6,6 +6,9 @@ from decimal import Decimal
 
 from app.core.security import get_current_user
 from app.services.supabase_client import get_supabase_client
+from app.integrations.base import CanonicalTripOffer
+from app.integrations.catalog import get_external_offer_by_trip_id, get_offer_by_provider_ref
+from app.integrations.registry import get_adapter
 
 
 router = APIRouter()
@@ -61,6 +64,8 @@ class BookingResponse(BaseModel):
     updated_at: datetime
     trip: Optional[dict] = None  # Trip details
     agent_name: Optional[str] = None
+    # "local" = public.booking; "external" = public.external_bookings
+    booking_source: str = "local"
 
 
 class UpdateBookingRequest(BaseModel):
@@ -93,6 +98,272 @@ def generate_booking_reference() -> str:
     return f"TW-{current_year}-{sequential:06d}"
 
 
+def generate_external_booking_reference() -> str:
+    current_year = datetime.now().year
+    sequential = int(datetime.now().timestamp() * 1000) % 1000000
+    return f"EXT-{current_year}-{sequential:06d}"
+
+
+def _trip_dict_from_offer(offer: CanonicalTripOffer) -> dict:
+    return {
+        "trip_id": offer.trip_id,
+        "origin_city": offer.origin_city,
+        "destination_city": offer.destination_city,
+        "departure_time": offer.departure_time.isoformat(),
+        "arrival_time": offer.arrival_time.isoformat(),
+        "price": float(offer.price),
+    }
+
+
+def _create_booking_notification(
+    *,
+    supabase,
+    booking_id: int,
+    user_id: str,
+    notification_type: str,
+    title: str,
+    message: str,
+) -> None:
+    """
+    Best-effort notification insert.
+    Booking/cancellation success should not fail if notification insert fails.
+    """
+    try:
+        supabase.table("booking_notifications").insert(
+            {
+                "booking_id": booking_id,
+                "user_id": user_id,
+                "notification_type": notification_type,
+                "title": title,
+                "message": message,
+                "is_read": False,
+            }
+        ).execute()
+    except Exception:
+        pass
+
+
+def _external_booking_row_to_response(row: dict, offer: CanonicalTripOffer | None) -> BookingResponse:
+    uid = row["user_id"]
+    eid = row["external_booking_id"]
+    syn = row.get("synthetic_trip_id")
+    trip_id_val = int(syn) if syn is not None else (offer.trip_id if offer else 0)
+    trip_dict = _trip_dict_from_offer(offer) if offer else None
+    if trip_dict is None and syn is not None:
+        trip_dict = {"trip_id": int(syn)}
+    agent_name = offer.agent_name if offer else None
+    bd = row["booking_date"]
+    ua = row.get("updated_at", row["booking_date"])
+    return BookingResponse(
+        booking_id=eid,
+        user_id=uid,
+        trip_id=trip_id_val,
+        itinerary_id=None,
+        booking_date=datetime.fromisoformat(bd.replace("Z", "+00:00")),
+        status=row["status"],
+        number_of_seats=row["number_of_seats"],
+        total_price=Decimal(str(row["total_price"])),
+        passenger_names=row.get("passenger_names") or [],
+        contact_email=row["contact_email"],
+        contact_phone=row["contact_phone"],
+        special_requests=row.get("special_requests"),
+        booking_reference=row["booking_reference"],
+        confirmed_at=datetime.fromisoformat(row["confirmed_at"].replace("Z", "+00:00")) if row.get("confirmed_at") else None,
+        cancelled_at=datetime.fromisoformat(row["cancelled_at"].replace("Z", "+00:00")) if row.get("cancelled_at") else None,
+        cancellation_reason=row.get("cancellation_reason"),
+        refund_amount=Decimal(str(row["refund_amount"])) if row.get("refund_amount") is not None else None,
+        updated_at=datetime.fromisoformat(ua.replace("Z", "+00:00")),
+        trip=trip_dict,
+        agent_name=agent_name,
+        booking_source="external",
+    )
+
+
+async def _create_external_booking(
+    booking_data: CreateBookingRequest,
+    user_id: str,
+    supabase,
+) -> BookingResponse:
+    offer = get_external_offer_by_trip_id(booking_data.trip_id)
+    if not offer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+    if offer.available_seats < booking_data.number_of_seats:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Not enough available seats. Only {offer.available_seats} seats available.",
+        )
+
+    adapter = get_adapter(offer.provider_id)
+    names = [p.full_name for p in booking_data.passengers]
+    confirm = adapter.confirm_booking(offer.external_ref, booking_data.number_of_seats, names)
+    if not confirm.ok:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=confirm.message or "External provider did not confirm the booking",
+        )
+
+    trip_price = offer.price
+    total_price = trip_price * booking_data.number_of_seats
+    booking_reference = generate_external_booking_reference()
+    existing_ref = (
+        supabase.table("external_bookings")
+        .select("external_booking_id")
+        .eq("booking_reference", booking_reference)
+        .execute()
+    )
+    if existing_ref.data:
+        booking_reference = generate_external_booking_reference()
+
+    now_iso = datetime.utcnow().isoformat()
+    insert_row = {
+        "user_id": user_id,
+        "provider_id": offer.provider_id,
+        "external_ref": offer.external_ref,
+        "synthetic_trip_id": booking_data.trip_id,
+        "booking_date": now_iso,
+        "status": "confirmed",
+        "number_of_seats": booking_data.number_of_seats,
+        "total_price": float(total_price),
+        "passenger_names": names,
+        "contact_email": booking_data.contact_email,
+        "contact_phone": booking_data.contact_phone,
+        "special_requests": booking_data.special_requests,
+        "booking_reference": booking_reference,
+        "provider_confirmation_ref": confirm.provider_confirmation_ref,
+        "confirmed_at": now_iso,
+        "provider_response": confirm.raw_response,
+        "updated_at": now_iso,
+    }
+    booking_result = supabase.table("external_bookings").insert(insert_row).execute()
+    if not booking_result.data:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create external booking")
+    created = booking_result.data[0]
+    eid = created["external_booking_id"]
+
+    passengers_data = [
+        {
+            "external_booking_id": eid,
+            "full_name": p.full_name,
+            "age": p.age,
+            "gender": p.gender,
+            "passport_number": p.passport_number,
+            "emergency_contact_name": p.emergency_contact_name,
+            "emergency_contact_phone": p.emergency_contact_phone,
+            "dietary_restrictions": p.dietary_restrictions,
+            "medical_conditions": p.medical_conditions,
+        }
+        for p in booking_data.passengers
+    ]
+    if passengers_data:
+        supabase.table("external_booking_passengers").insert(passengers_data).execute()
+
+    supabase.table("external_payments").insert(
+        {
+            "external_booking_id": eid,
+            "amount": float(total_price),
+            "currency": "PKR",
+            "payment_method": "card",
+            "payment_status": "completed",
+            "payment_date": now_iso,
+            "transaction_id": f"TXN-{booking_reference}",
+            "updated_at": now_iso,
+        }
+    ).execute()
+
+    _create_booking_notification(
+        supabase=supabase,
+        booking_id=eid,
+        user_id=user_id,
+        notification_type="booking_confirmed",
+        title="Booking Confirmed",
+        message=(
+            f"Your booking {booking_reference} for "
+            f"{offer.origin_city} -> {offer.destination_city} has been confirmed."
+        ),
+    )
+
+    return BookingResponse(
+        booking_id=eid,
+        user_id=user_id,
+        trip_id=booking_data.trip_id,
+        itinerary_id=None,
+        booking_date=datetime.fromisoformat(created["booking_date"].replace("Z", "+00:00")),
+        status=created["status"],
+        number_of_seats=created["number_of_seats"],
+        total_price=Decimal(str(created["total_price"])),
+        passenger_names=created["passenger_names"],
+        contact_email=created["contact_email"],
+        contact_phone=created["contact_phone"],
+        special_requests=created.get("special_requests"),
+        booking_reference=created["booking_reference"],
+        confirmed_at=datetime.fromisoformat(created["confirmed_at"].replace("Z", "+00:00")) if created.get("confirmed_at") else None,
+        cancelled_at=None,
+        cancellation_reason=None,
+        refund_amount=None,
+        updated_at=datetime.fromisoformat(created.get("updated_at", created["booking_date"]).replace("Z", "+00:00")),
+        trip=_trip_dict_from_offer(offer),
+        agent_name=offer.agent_name,
+        booking_source="external",
+    )
+
+
+def _cancel_external_booking(
+    booking_id: int,
+    user_id: str,
+    cancellation_reason: Optional[str],
+    supabase,
+) -> BookingResponse:
+    ext_res = (
+        supabase.table("external_bookings")
+        .select("*")
+        .eq("external_booking_id", booking_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not ext_res.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    row = ext_res.data[0]
+    if row["status"] == "cancelled":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Booking is already cancelled")
+    now_iso = datetime.utcnow().isoformat()
+    supabase.table("external_bookings").update(
+        {
+            "status": "cancelled",
+            "cancelled_at": now_iso,
+            "cancellation_reason": cancellation_reason,
+            "refund_amount": float(row["total_price"]),
+            "updated_at": now_iso,
+        }
+    ).eq("external_booking_id", booking_id).execute()
+    supabase.table("external_payments").update(
+        {
+            "payment_status": "refunded",
+            "refunded_at": now_iso,
+            "refund_amount": float(row["total_price"]),
+            "updated_at": now_iso,
+        }
+    ).eq("external_booking_id", booking_id).execute()
+    updated_res = supabase.table("external_bookings").select("*").eq("external_booking_id", booking_id).execute()
+    updated = updated_res.data[0]
+    offer = get_offer_by_provider_ref(updated["provider_id"], updated["external_ref"])
+    origin_city = offer.origin_city if offer else "your selected origin"
+    destination_city = offer.destination_city if offer else "your selected destination"
+    _create_booking_notification(
+        supabase=supabase,
+        booking_id=booking_id,
+        user_id=user_id,
+        notification_type="cancellation",
+        title="Booking Cancelled",
+        message=(
+            f"Your booking {updated['booking_reference']} for "
+            f"{origin_city} -> {destination_city} has been cancelled. "
+            f"Refund of PKR {updated['total_price']} will be processed."
+        ),
+    )
+    return _external_booking_row_to_response(updated, offer)
+
+
 @router.post("/", response_model=BookingResponse, status_code=status.HTTP_201_CREATED)
 async def create_booking(
     booking_data: CreateBookingRequest,
@@ -101,10 +372,21 @@ async def create_booking(
 ):
     """
     Create a new booking for a trip.
-    Automatically processes payment (assumes successful).
-    Updates available_seats on the trip.
+    Local: processes payment, updates trips.available_seats.
+    External (negative trip_id): confirms via integration adapter, then persists external_bookings.
     """
     user_id = current_user["id"]
+
+    if booking_data.trip_id < 0:
+        try:
+            return await _create_external_booking(booking_data, user_id, supabase)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating external booking: {str(e)}",
+            )
     
     try:
         # Get trip details
@@ -208,15 +490,14 @@ async def create_booking(
         agent_result = supabase.table("travel_agent").select("name").eq("agent_id", trip["agent_id"]).execute()
         agent_name = agent_result.data[0].get("name") if agent_result.data else None
         
-        notification_data = {
-            "booking_id": booking_id,
-            "user_id": user_id,
-            "notification_type": "booking_confirmed",
-            "title": "Booking Confirmed",
-            "message": f"Your booking {booking_reference} for {trip['origin_city']} → {trip['destination_city']} has been confirmed.",
-            "is_read": False,
-        }
-        supabase.table("booking_notifications").insert(notification_data).execute()
+        _create_booking_notification(
+            supabase=supabase,
+            booking_id=booking_id,
+            user_id=user_id,
+            notification_type="booking_confirmed",
+            title="Booking Confirmed",
+            message=f"Your booking {booking_reference} for {trip['origin_city']} -> {trip['destination_city']} has been confirmed.",
+        )
         
         # Get agent name for response
         return BookingResponse(
@@ -248,6 +529,7 @@ async def create_booking(
                 "price": float(_resolve_unit_price(created_booking, trip)),
             },
             agent_name=agent_name,
+            booking_source="local",
         )
     
     except HTTPException:
@@ -319,8 +601,18 @@ async def get_my_bookings(
                     "price": float(_resolve_unit_price(booking, trip)),
                 } if trip else None,
                 agent_name=agent_name,
+                booking_source="local",
             ))
-        
+
+        ext_query = supabase.table("external_bookings").select("*").eq("user_id", user_id)
+        if status_filter:
+            ext_query = ext_query.eq("status", status_filter)
+        ext_result = ext_query.execute()
+        for row in ext_result.data or []:
+            offer = get_offer_by_provider_ref(row["provider_id"], row["external_ref"])
+            bookings.append(_external_booking_row_to_response(row, offer))
+
+        bookings.sort(key=lambda b: b.booking_date, reverse=True)
         return bookings
     
     except HTTPException:
@@ -346,8 +638,20 @@ async def get_booking_by_id(
     
     try:
         result = supabase.table("booking").select("*").eq("booking_id", booking_id).eq("user_id", user_id).execute()
-        
+
         if not result.data:
+            ext = (
+                supabase.table("external_bookings")
+                .select("*")
+                .eq("external_booking_id", booking_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if ext.data:
+                row = ext.data[0]
+                offer = get_offer_by_provider_ref(row["provider_id"], row["external_ref"])
+                return _external_booking_row_to_response(row, offer)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Booking not found",
@@ -394,6 +698,7 @@ async def get_booking_by_id(
                 "price": float(_resolve_unit_price(booking, trip)),
             } if trip else None,
             agent_name=agent_name,
+            booking_source="local",
         )
     
     except HTTPException:
@@ -422,12 +727,9 @@ async def cancel_booking(
     try:
         # Get booking
         booking_result = supabase.table("booking").select("*").eq("booking_id", booking_id).eq("user_id", user_id).execute()
-        
+
         if not booking_result.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Booking not found",
-            )
+            return _cancel_external_booking(booking_id, user_id, cancellation_reason, supabase)
         
         booking = booking_result.data[0]
         
@@ -473,15 +775,18 @@ async def cancel_booking(
         }).eq("booking_id", booking_id).execute()
         
         # Create notification
-        notification_data = {
-            "booking_id": booking_id,
-            "user_id": user_id,
-            "notification_type": "cancellation",
-            "title": "Booking Cancelled",
-            "message": f"Your booking {booking['booking_reference']} has been cancelled. Refund of PKR {booking['total_price']} will be processed.",
-            "is_read": False,
-        }
-        supabase.table("booking_notifications").insert(notification_data).execute()
+        _create_booking_notification(
+            supabase=supabase,
+            booking_id=booking_id,
+            user_id=user_id,
+            notification_type="cancellation",
+            title="Booking Cancelled",
+            message=(
+                f"Your booking {booking['booking_reference']} for "
+                f"{trip['origin_city']} -> {trip['destination_city']} has been cancelled. "
+                f"Refund of PKR {booking['total_price']} will be processed."
+            ),
+        )
         
         # Get updated booking
         updated_booking_result = supabase.table("booking").select("*").eq("booking_id", booking_id).execute()
@@ -520,6 +825,7 @@ async def cancel_booking(
                 "price": float(_resolve_unit_price(updated_booking, trip)),
             },
             agent_name=agent_name,
+            booking_source="local",
         )
     
     except HTTPException:

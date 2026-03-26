@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getTopAgents, getTrips } from "@/lib/api";
+import { getRecommendations, getTopAgents, getTrips } from "@/lib/api";
 import { splitHomeTrips } from "@/lib/tripSections";
 import { Search, Calendar as CalendarIcon, MapPin, Banknote, Bus, Users, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,16 @@ export default function TravelerHome() {
     queryFn: () => getTrips(),
   });
 
-  const { recommendations, trending } = splitHomeTrips(tripsData?.trips ?? []);
+  const { data: recommendationsData, isLoading: recommendationsLoading } = useQuery({
+    queryKey: ["home-recommendations"],
+    queryFn: () => getRecommendations(4),
+  });
+
+  const { recommendations: fallbackRecommendations, trending } = splitHomeTrips(tripsData?.trips ?? []);
+  const recommendations =
+    recommendationsData?.trips && recommendationsData.trips.length > 0
+      ? recommendationsData.trips
+      : fallbackRecommendations;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -317,7 +326,12 @@ export default function TravelerHome() {
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             AI-Powered Recommendations For You
           </h2>
-          {tripsLoading ? (
+          {recommendationsData?.summary && (
+            <div className="glass-card p-4 mb-4 text-sm text-body-text">
+              {recommendationsData.summary}
+            </div>
+          )}
+          {tripsLoading || recommendationsLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[1, 2, 3, 4].map((i) => (
                 <Skeleton key={i} className="h-[420px] w-full" />

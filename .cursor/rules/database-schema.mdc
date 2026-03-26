@@ -18,6 +18,10 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `itinerary` - User travel itineraries
 - `booking` - Trip bookings
 - `booking_passengers` - Passenger details for bookings
+- `external_bookings` - Bookings for external provider trips (Service Integration Layer)
+- `external_booking_passengers` - Passenger details for external bookings
+- `external_payments` - Payment records for external bookings
+- `external_trip_snapshots` - Optional snapshots of external listings at ingest/search time
 - `payments` - Payment records for bookings
 - `booking_notifications` - Booking-related notifications
 - `trips` - Trips offered by agents
@@ -63,15 +67,16 @@ FastAPI routers under `backend/app/api/` exercise these Supabase tables today:
 | Router | Tables |
 |--------|--------|
 | `auth.py`, `profile.py` | `travel_agent`, `profiles` |
-| `trips.py` | `trips`, `travel_agent` (join), `trip_images` |
-| `bookings.py` | `booking`, `trips`, `booking_passengers`, `payments`, `travel_agent`, `booking_notifications` |
+| `trips.py` | `trips`, `travel_agent` (join), `trip_images`; merged list includes external offers from `app.integrations` (no `trips` row) |
+| `bookings.py` | `booking`, `trips`, `booking_passengers`, `payments`, `travel_agent`, `booking_notifications`, `external_bookings`, `external_booking_passengers`, `external_payments` |
 | `favorites.py` | `favorites`, `trips` |
 | `collaboration.py` | `travel_agent`, `trips`, `bus_pooling_requests`, `agent_messages`, `booking` |
 | `reviews.py` | `travel_agent`, `profiles`, `agent_reviews` |
 | `notification_preferences.py` | `notification_preferences` |
 | `notifications.py` | `booking_notifications` |
+| `integrations.py` | (read-only adapters; no direct Supabase tables) |
 
-SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `additive_features_no_column_renames.sql`, `storage_trip_images_bucket.sql`, `optional_profiles_trigger.sql`.
+SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `optional_profiles_trigger.sql`, `external_integrations_phase1.sql` (external SIL tables — run in Supabase SQL Editor).
 
 **Maintenance:** When adding or changing `supabase.table(...)` usage in `backend/app/api/`, extend `backend/supabase/schema_reference.sql` using its existing comment-block style. When the actual database gains tables, columns, or relationships, update this `database-schema.mdc` file as well.
 
@@ -100,7 +105,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `updated_at` (timestamptz) - Last update timestamp
 
 **Relationships:**
-- Referenced by `user_id` in: `itinerary`, `booking`, `travel_agent`, `recommendation`, `favorites`, `notification_preferences`
+- Referenced by `user_id` in: `itinerary`, `booking`, `external_bookings`, `travel_agent`, `recommendation`, `favorites`, `notification_preferences`
 - Referenced by `id` as `created_by` on `trip_images` (optional; set when the API records the uploading user)
 - One-to-one with `auth.users` (via `id`)
 
@@ -362,6 +367,112 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `is_read` flag tracks read status for unread notification counts
 - Notifications can be filtered by `user_id` and `is_read` for efficient querying
 - Used for in-app notifications and can be extended for email/push notifications
+
+---
+
+## Table: `external_trip_snapshots`
+
+**Purpose:** Optional canonical snapshot of an external provider listing at ingest or search time (audit and display consistency). Does **not** replace `trips.trip_id` for local inventory.
+
+**Columns:**
+- `snapshot_id` (int8, PRIMARY KEY, identity) - Snapshot row id
+- `provider_id` (text, NOT NULL) - Stable provider key (e.g. `mock_vendor_a`)
+- `external_ref` (text, NOT NULL) - Provider’s trip/offer identifier
+- `origin_city`, `destination_province`, `destination_city` (text, nullable)
+- `departure_time`, `arrival_time` (timestamptz, nullable)
+- `price` (numeric, nullable) - Amount in application currency (PKR when shown in app)
+- `transport_type` (text, nullable)
+- `total_seats`, `available_seats` (int4, nullable)
+- `suitability` (text, nullable)
+- `image_url` (text, nullable)
+- `raw_snapshot` (jsonb, nullable) - Optional vendor-normalized or raw audit payload
+- `created_at` (timestamptz) - Row creation time
+
+**Relationships:**
+- Logical link to provider offers via `(provider_id, external_ref)`; no FK to `trips`.
+
+**Key Notes:**
+- Multiple rows per `(provider_id, external_ref)` are allowed over time (history).
+- Indexed for lookup by provider + ref and by `created_at`.
+
+---
+
+## Table: `external_bookings`
+
+**Purpose:** Records bookings made **through TourWise** for trips supplied by an **external** provider. Persisted **after** adapter/provider confirmation (mock or real). Local bookings remain in `booking` + `trips`.
+
+**Columns:**
+- `external_booking_id` (int8, PRIMARY KEY, identity)
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id`
+- `provider_id` (text, NOT NULL)
+- `external_ref` (text, NOT NULL) - Provider trip/offer id at time of booking
+- `synthetic_trip_id` (int8, nullable) - Optional UI `trip_id` used in routes (e.g. synthetic external id)
+- `booking_date` (timestamptz) - When the booking was recorded in TourWise
+- `status` (text, NOT NULL, default `confirmed`) - Align with local booking lifecycle literals where applicable (`confirmed`, `cancelled`, etc.)
+- `number_of_seats` (int4, NOT NULL, > 0)
+- `total_price` (numeric, NOT NULL, >= 0)
+- `passenger_names` (text[]) - Quick reference array (mirror `booking`)
+- `contact_email`, `contact_phone` (text, NOT NULL)
+- `special_requests` (text, nullable)
+- `booking_reference` (text, NOT NULL, UNIQUE) - TourWise-facing code; prefer prefix distinct from local `TW-...` (e.g. `EXT-...`)
+- `provider_confirmation_ref` (text, nullable) - Id returned by provider on success
+- `confirmed_at` (timestamptz, nullable)
+- `cancelled_at` (timestamptz, nullable)
+- `cancellation_reason` (text, nullable)
+- `refund_amount` (numeric, nullable)
+- `provider_response` (jsonb, nullable) - Audit of provider confirmation payload
+- `created_at`, `updated_at` (timestamptz)
+
+**Relationships:**
+- `user_id` → `profiles.id` (many-to-one)
+- Referenced by `external_booking_id` in: `external_booking_passengers`, `external_payments`
+
+**Key Notes:**
+- Does **not** reference `trips.trip_id` (external inventory is not TourWise `trips` rows).
+- Must **not** decrement `trips.available_seats` when creating these rows (Phase 2 API responsibility).
+
+---
+
+## Table: `external_booking_passengers`
+
+**Purpose:** Passenger detail rows for `external_bookings` (parallel to `booking_passengers`).
+
+**Columns:**
+- `passenger_id` (int8, PRIMARY KEY, identity)
+- `external_booking_id` (int8, FOREIGN KEY) - References `external_bookings.external_booking_id` ON DELETE CASCADE
+- `full_name` (text, NOT NULL)
+- `age` (int4, nullable)
+- `gender` (text, nullable)
+- `passport_number` (text, nullable)
+- `emergency_contact_name`, `emergency_contact_phone` (text, nullable)
+- `dietary_restrictions`, `medical_conditions` (text, nullable)
+- `created_at` (timestamptz)
+
+**Relationships:**
+- `external_booking_id` → `external_bookings.external_booking_id` (many-to-one)
+
+---
+
+## Table: `external_payments`
+
+**Purpose:** Payment records for external bookings (parallel to `payments` for local `booking`).
+
+**Columns:**
+- `payment_id` (int8, PRIMARY KEY, identity)
+- `external_booking_id` (int8, FOREIGN KEY) - References `external_bookings.external_booking_id` ON DELETE CASCADE
+- `amount` (numeric, NOT NULL, > 0)
+- `currency` (text, NOT NULL, default `PKR`)
+- `payment_method` (text, nullable)
+- `payment_status` (text, NOT NULL, default `completed`)
+- `transaction_id` (text, nullable, unique when present)
+- `payment_date` (timestamptz, nullable)
+- `refunded_at` (timestamptz, nullable)
+- `refund_amount` (numeric, nullable)
+- `payment_details` (jsonb, nullable)
+- `created_at`, `updated_at` (timestamptz)
+
+**Relationships:**
+- `external_booking_id` → `external_bookings.external_booking_id` (many-to-one)
 
 ---
 
@@ -740,6 +851,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 ### Runtime literals currently observed in API
 - `travel_agent.verification_status`: `pending`, `approved`
 - `booking.status`: `confirmed`, `cancelled` (plus passthrough filtering in list endpoint)
+- `external_bookings.status`: `confirmed`, `cancelled` (align with local booking literals as Phase 2 implements them)
 - `payments.currency`: `PKR` on insert from booking creation in `bookings.py`
 - `payments.payment_status`: `completed`, `refunded`
 - `bus_pooling_requests.status`: `pending`, `approved`, `rejected`, `cancelled`
