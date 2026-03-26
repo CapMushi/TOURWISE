@@ -17,6 +17,9 @@ class AgentReviewableItem(BaseModel):
     email: Optional[str] = None
     rating: Optional[Decimal] = None
     numberofreviews: Optional[int] = None
+    verification_status: Optional[str] = None
+    contact_info: Optional[dict] = None
+    profile_details: Optional[dict] = None
 
 
 class AgentReview(BaseModel):
@@ -45,7 +48,7 @@ async def list_agents_for_reviews(
     try:
         result = (
             supabase.table("travel_agent")
-            .select("agent_id, name, email, rating, numberofreviews")
+            .select("agent_id, name, email, rating, numberofreviews, verification_status, contact_info, profile_details")
             .order("rating", desc=True)
             .execute()
         )
@@ -54,6 +57,72 @@ async def list_agents_for_reviews(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching agents for reviews: {str(e)}",
+        )
+
+
+@router.get("/agents/{agent_id}/trips")
+async def get_agent_public_trips(
+    agent_id: int,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Get active trips for a given agent (public view for travelers)."""
+    _ = current_user["id"]
+    try:
+        agent = supabase.table("travel_agent").select("agent_id").eq("agent_id", agent_id).limit(1).execute()
+        if not agent.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        trips_res = (
+            supabase.table("trips")
+            .select("trip_id, origin_city, destination_city, departure_time, arrival_time, price, transport_type, total_seats, available_seats, suitability, image_url")
+            .eq("agent_id", agent_id)
+            .gt("available_seats", 0)
+            .order("departure_time", desc=False)
+            .limit(20)
+            .execute()
+        )
+        return trips_res.data or []
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching agent trips: {str(e)}",
+        )
+
+
+@router.get("/agents/{agent_id}/my-review")
+async def get_my_review_for_agent(
+    agent_id: int,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Get the current traveler's own review for a specific agent, or null."""
+    user_id = current_user["id"]
+    try:
+        res = (
+            supabase.table("agent_reviews")
+            .select("*")
+            .eq("agent_id", agent_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return None
+        row = res.data[0]
+        return {
+            "review_id": row["review_id"],
+            "agent_id": row["agent_id"],
+            "rating": float(row["rating"]),
+            "comment": row.get("comment"),
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at"),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching your review: {str(e)}",
         )
 
 

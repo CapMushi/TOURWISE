@@ -125,3 +125,136 @@ async def update_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating profile: {str(e)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Agent-specific profile endpoints
+# ---------------------------------------------------------------------------
+
+class AgentProfileResponse(BaseModel):
+    agent_id: int
+    user_id: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    verification_status: Optional[str] = None
+    rating: Optional[float] = None
+    numberofreviews: Optional[int] = None
+    contact_info: Optional[Dict[str, Any]] = None
+    profile_details: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+
+
+class AgentProfileUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    contact_info: Optional[Dict[str, Any]] = None
+    profile_details: Optional[Dict[str, Any]] = None
+
+
+@router.get("/agent", response_model=AgentProfileResponse)
+async def get_agent_profile(
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Get the current user's travel agent profile."""
+    user_id = current_user["id"]
+    try:
+        res = (
+            supabase.table("travel_agent")
+            .select("*")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent profile not found for this user",
+            )
+        row = res.data[0]
+        rating = row.get("rating")
+        return AgentProfileResponse(
+            agent_id=row["agent_id"],
+            user_id=row["user_id"],
+            name=row.get("name"),
+            email=row.get("email"),
+            verification_status=row.get("verification_status"),
+            rating=float(rating) if rating is not None else None,
+            numberofreviews=row.get("numberofreviews"),
+            contact_info=row.get("contact_info"),
+            profile_details=row.get("profile_details"),
+            created_at=row.get("created_at"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching agent profile: {str(e)}",
+        )
+
+
+@router.patch("/agent", response_model=AgentProfileResponse)
+async def update_agent_profile(
+    body: AgentProfileUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Update the current user's travel agent profile."""
+    user_id = current_user["id"]
+    try:
+        existing = (
+            supabase.table("travel_agent")
+            .select("agent_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not existing.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent profile not found",
+            )
+
+        payload: dict = {}
+        if body.name is not None:
+            payload["name"] = body.name.strip()
+        if body.contact_info is not None:
+            payload["contact_info"] = body.contact_info
+        if body.profile_details is not None:
+            payload["profile_details"] = body.profile_details
+
+        if not payload:
+            return await get_agent_profile(current_user=current_user, supabase=supabase)
+
+        res = (
+            supabase.table("travel_agent")
+            .update(payload)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update agent profile",
+            )
+        row = res.data[0]
+        rating = row.get("rating")
+        return AgentProfileResponse(
+            agent_id=row["agent_id"],
+            user_id=row["user_id"],
+            name=row.get("name"),
+            email=row.get("email"),
+            verification_status=row.get("verification_status"),
+            rating=float(rating) if rating is not None else None,
+            numberofreviews=row.get("numberofreviews"),
+            contact_info=row.get("contact_info"),
+            profile_details=row.get("profile_details"),
+            created_at=row.get("created_at"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating agent profile: {str(e)}",
+        )

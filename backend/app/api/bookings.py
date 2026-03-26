@@ -486,10 +486,7 @@ async def create_booking(
             "available_seats": new_available_seats
         }).eq("trip_id", booking_data.trip_id).execute()
         
-        # Create notification
-        agent_result = supabase.table("travel_agent").select("name").eq("agent_id", trip["agent_id"]).execute()
-        agent_name = agent_result.data[0].get("name") if agent_result.data else None
-        
+        # Notify traveler
         _create_booking_notification(
             supabase=supabase,
             booking_id=booking_id,
@@ -498,6 +495,25 @@ async def create_booking(
             title="Booking Confirmed",
             message=f"Your booking {booking_reference} for {trip['origin_city']} -> {trip['destination_city']} has been confirmed.",
         )
+
+        # Notify the travel agent that a new booking was made on their trip
+        agent_result = supabase.table("travel_agent").select("name, user_id").eq("agent_id", trip["agent_id"]).execute()
+        agent_name = agent_result.data[0].get("name") if agent_result.data else None
+        if agent_result.data:
+            agent_user_id = agent_result.data[0]["user_id"]
+            passenger_names_str = ", ".join([p.full_name for p in booking_data.passengers])
+            _create_booking_notification(
+                supabase=supabase,
+                booking_id=booking_id,
+                user_id=agent_user_id,
+                notification_type="new_booking",
+                title="New Booking on Your Trip",
+                message=(
+                    f"{booking_data.number_of_seats} seat(s) booked on your trip "
+                    f"{trip['origin_city']} → {trip['destination_city']} "
+                    f"(Ref: {booking_reference}). Passengers: {passenger_names_str}."
+                ),
+            )
         
         # Get agent name for response
         return BookingResponse(
@@ -836,3 +852,148 @@ async def cancel_booking(
             detail=f"Error cancelling booking: {str(e)}",
         )
 
+
+# ---------------------------------------------------------------------------
+# Agent-facing: view all passengers booked on the agent's trips
+# ---------------------------------------------------------------------------
+
+class PassengerDetail(BaseModel):
+    booking_id: int
+    booking_reference: str
+    booking_date: datetime
+    status: str
+    number_of_seats: int
+    total_price: Decimal
+    contact_email: str
+    contact_phone: str
+    special_requests: Optional[str] = None
+    passengers: List[PassengerInfo]
+
+
+class TripWithPassengers(BaseModel):
+    trip_id: int
+    origin_city: str
+    destination_city: str
+    departure_time: datetime
+    arrival_time: datetime
+    price: Decimal
+    transport_type: str
+    total_seats: int
+    available_seats: int
+    bookings: List[PassengerDetail]
+    total_booked_seats: int
+
+
+@router.get("/agent/passengers", response_model=List[TripWithPassengers])
+async def get_agent_trip_passengers(
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """
+    Return all trips owned by the current agent, each with their bookings and
+    full passenger details.  Only accessible to travel agents.
+    """
+    try:
+        agent_res = (
+            supabase.table("travel_agent")
+            .select("agent_id")
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not agent_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not a travel agent",
+            )
+        agent_id = agent_res.data[0]["agent_id"]
+
+        trips_res = (
+            supabase.table("trips")
+            .select("*")
+            .eq("agent_id", agent_id)
+            .order("departure_time", desc=False)
+            .execute()
+        )
+        trips = trips_res.data or []
+
+        result: List[TripWithPassengers] = []
+        for trip in trips:
+            trip_id = trip["trip_id"]
+
+            bookings_res = (
+                supabase.table("booking")
+                .select("*")
+                .eq("trip_id", trip_id)
+                .neq("status", "cancelled")
+                .order("booking_date", desc=True)
+                .execute()
+            )
+            bookings_raw = bookings_res.data or []
+
+            trip_bookings: List[PassengerDetail] = []
+            for b in bookings_raw:
+                pax_res = (
+                    supabase.table("booking_passengers")
+                    .select("*")
+                    .eq("booking_id", b["booking_id"])
+                    .execute()
+                )
+                passengers: List[PassengerInfo] = [
+                    PassengerInfo(
+                        full_name=p["full_name"],
+                        age=p.get("age"),
+                        gender=p.get("gender"),
+                        passport_number=p.get("passport_number"),
+                        emergency_contact_name=p.get("emergency_contact_name"),
+                        emergency_contact_phone=p.get("emergency_contact_phone"),
+                        dietary_restrictions=p.get("dietary_restrictions"),
+                        medical_conditions=p.get("medical_conditions"),
+                    )
+                    for p in (pax_res.data or [])
+                ]
+                trip_bookings.append(
+                    PassengerDetail(
+                        booking_id=b["booking_id"],
+                        booking_reference=b["booking_reference"],
+                        booking_date=datetime.fromisoformat(
+                            b["booking_date"].replace("Z", "+00:00")
+                        ),
+                        status=b["status"],
+                        number_of_seats=b["number_of_seats"],
+                        total_price=Decimal(str(b["total_price"])),
+                        contact_email=b["contact_email"],
+                        contact_phone=b["contact_phone"],
+                        special_requests=b.get("special_requests"),
+                        passengers=passengers,
+                    )
+                )
+
+            total_booked = sum(b.number_of_seats for b in trip_bookings)
+            result.append(
+                TripWithPassengers(
+                    trip_id=trip_id,
+                    origin_city=trip["origin_city"],
+                    destination_city=trip["destination_city"],
+                    departure_time=datetime.fromisoformat(
+                        trip["departure_time"].replace("Z", "+00:00")
+                    ),
+                    arrival_time=datetime.fromisoformat(
+                        trip["arrival_time"].replace("Z", "+00:00")
+                    ),
+                    price=Decimal(str(trip["price"])),
+                    transport_type=trip["transport_type"],
+                    total_seats=trip["total_seats"],
+                    available_seats=trip["available_seats"],
+                    bookings=trip_bookings,
+                    total_booked_seats=total_booked,
+                )
+            )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching agent passengers: {str(e)}",
+        )

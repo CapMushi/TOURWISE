@@ -1,4 +1,4 @@
-import { Home, MapPin, User, LogOut, LayoutDashboard, Bell, Briefcase, MessageSquare, Users, UserCog, Calendar, Star } from "lucide-react";
+import { Home, MapPin, User, LogOut, LayoutDashboard, Bell, Briefcase, MessageSquare, Users, UserCog, Calendar, Star, UsersRound } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
   Sidebar,
@@ -29,6 +29,7 @@ const agentItems = [
   { title: "Dashboard", url: "/agent", icon: LayoutDashboard },
   { title: "Notifications", url: "/agent/notifications", icon: Bell },
   { title: "Manage Trips", url: "/agent/manage-trips", icon: Briefcase },
+  { title: "Passengers", url: "/agent/passengers", icon: UsersRound },
   { title: "Resource Inventory", url: "/agent/resource-inventory", icon: Briefcase },
   { title: "Collaboration Hub", url: "/agent/collaboration", icon: MessageSquare },
   { title: "Profile", url: "/agent/profile", icon: User },
