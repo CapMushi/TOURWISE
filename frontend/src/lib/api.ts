@@ -75,6 +75,14 @@ export interface TripListResponse {
   total: number;
 }
 
+export interface RecommendationsResponse {
+  trips: TripResponse[];
+  total: number;
+  ai_used: boolean;
+  fallback_used: boolean;
+  summary?: string | null;
+}
+
 // Search filters for trips
 export interface TripSearchFilters {
   destination_province?: string;
@@ -240,6 +248,17 @@ export async function getTrips(filters?: TripSearchFilters): Promise<TripListRes
   const endpoint = `/api/trips${queryString ? `?${queryString}` : ""}`;
   
   return apiClient<TripListResponse>(endpoint, {
+    method: "GET",
+  });
+}
+
+export async function getRecommendations(limit: number = 4, userQuery?: string): Promise<RecommendationsResponse> {
+  const params = new URLSearchParams();
+  params.append("limit", String(limit));
+  if (userQuery && userQuery.trim()) {
+    params.append("user_query", userQuery.trim());
+  }
+  return apiClient<RecommendationsResponse>(`/api/recommendations?${params.toString()}`, {
     method: "GET",
   });
 }

@@ -1,6 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import health, auth, trips, collaboration, bookings, favorites, notification_preferences, profile, notifications, integrations
+from app.api import (
+    health,
+    auth,
+    trips,
+    collaboration,
+    bookings,
+    favorites,
+    notification_preferences,
+    profile,
+    notifications,
+    integrations,
+    recommendations,
+)
 
 app = FastAPI(
     title="TourWise API",
@@ -45,6 +57,7 @@ app.include_router(
 app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
+app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
 
 
 @app.get("/")

@@ -1,0 +1,45 @@
+---
+description: AI-powered recommendations with Gemini using minimal, additive changes
+alwaysApply: false
+---
+
+# AI-Powered Recommendations (Minimal Impact)
+
+## Goal
+- Add personalized recommendations without changing core trip search, booking, cancellation, or external integration workflows.
+- Keep AI as a ranking/enrichment layer, not a source of truth.
+
+## Implementation Scope (Minimal)
+- Add backend endpoint: `GET /api/recommendations`.
+- Keep existing endpoints (`/api/trips`, `/api/bookings`, `/api/notifications`) unchanged.
+- On frontend, only replace/augment home recommendations fetch logic; keep current UI components.
+- Add a dedicated system prompt file for Gemini constraints/rules (for example: `backend/app/services/prompts/recommendation_system_prompt.txt`).
+
+## Data and Prompt Rules
+- Build candidate trips server-side first (availability, dates, basic filters).
+- Send Gemini only minimal user context and candidate summaries (no sensitive PII).
+- Require strict JSON output: ranked `trip_id` list, optional `score`, optional short `reason`.
+- Load a fixed system prompt from the dedicated prompt file and combine it with request-specific user/candidate context.
+
+## Safety and Reliability
+- Validate Gemini output agaainst candidate set (valid ids, no duplicates, bounded result count).
+- Enforce timeout and catch parse/model errors.
+- If AI fails, fallback to deterministic ranking (current rule-based logic).
+- Never block booking flow due to recommendation service errors.
+- Keep system prompt instructions deterministic: ranking-only behavior, no policy overrides, no unsupported fields in output.
+
+## Workflow Compatibility
+- Recommendations are additive and read-only.
+- Booking source branching (local vs external) remains unchanged.
+- Notifications, favorites rules, and external adapter contracts remain unchanged.
+
+## Configuration
+- Store `GEMINI_API_KEY` only in backend enviaronment.
+- Never expose provider keys to frontend.
+- Add model/timeout config with safe defaults.
+- Version and own the system prompt file in repo so recommendation behavior is auditable and reproducible.
+
+## Done Criteria
+- Home page shows AI-ranked trips when available.
+- Automatic fallback returns deterministic recommendations when AI is unavailable.
+- Existing search, booking, cancel, and notification flows pass unchanged.

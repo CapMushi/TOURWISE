@@ -1,0 +1,40 @@
+---
+description: AI recommendation standards using preferences, intent text, and safe Gemini ranking
+alwaysApply: false
+---
+
+# AI Recommendation Standards
+
+## Product Goal
+- Keep recommendations additive: do not change booking, cancel, search, favorites, or integration workflows.
+- Use deterministic filtering for safety, then Gemini for semantic ranking and explanations.
+
+## Preference Model (General)
+- Store structured tags in `profiles.preferences`:
+  - `trip_style`, `pace`, `group_type`, `budget_band`, `trip_duration_pref`
+  - `transport_prefs`, `activity_prefs`, `season_pref`, `crowd_pref`, `departure_time_pref`
+- Support free-text intent field: `intent_text` for nuanced user goals.
+- Treat strict filters as hard constraints; treat tags/intent as soft ranking signals.
+
+## Gemini Responsibilities
+- Parse nuanced intent from `intent_text` and preference tags.
+- Resolve trade-offs (price vs duration vs comfort vs seats) within valid candidates.
+- Return diverse top-N results (avoid repetitive same-route/same-agent picks when alternatives exist).
+- Generate concise, non-repetitive per-trip reasons plus optional overall summary.
+
+## Prompt and Output Rules
+- Use a dedicated system prompt file in backend services prompts.
+- Require strict JSON output with only candidate `trip_id` values.
+- Validate IDs, enforce uniqueness, and cap result size.
+- Reject unsupported fields and malformed payloads.
+
+## Reliability and Safety
+- Keep recommendation pipeline read-only and non-blocking.
+- On timeout/model error/invalid output, fallback to deterministic ranking.
+- Expose response flags (`ai_used`, `fallback_used`) for observability.
+- Never expose model API keys to frontend.
+
+## Demo-Ready Expectations
+- Recommendations should be personalized, explainable, and stable under fallback.
+- Reasons should mention varied factors (not only affordability).
+- Existing traveler and external booking flows must remain unchanged.

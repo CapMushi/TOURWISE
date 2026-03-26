@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     
     # Environment
     ENVIRONMENT: str = "development"
+
+    # Gemini recommendation configuration (optional)
+    GEMINI_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_TIMEOUT_SECONDS: int = 8
     
     model_config = SettingsConfigDict(
         env_file=".env",

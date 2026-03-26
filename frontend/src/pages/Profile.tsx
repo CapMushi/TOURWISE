@@ -1,14 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getUserProfile } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { getUserProfile, updateUserProfile } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
 const travelStyles = [
   "Adventure",
@@ -32,9 +35,14 @@ function initialsFromUser(username: string | null | undefined, email: string | n
 
 export default function Profile() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { user } = useAuth();
   const [selectedStyles, setSelectedStyles] = useState<string[]>(["Adventure", "Cultural"]);
   const [budget, setBudget] = useState("Mid-Range");
+  const [intentText, setIntentText] = useState("");
+  const [pace, setPace] = useState("moderate");
+  const [crowdPref, setCrowdPref] = useState("balanced");
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ["user-profile"],
@@ -44,11 +52,66 @@ export default function Profile() {
   const displayEmail = profile?.email ?? user?.email ?? "";
   const displayName = profile?.username?.trim() || user?.email?.split("@")[0] || "Traveler";
 
+  useEffect(() => {
+    const prefs = profile?.preferences;
+    if (!prefs || typeof prefs !== "object") return;
+    const p = prefs as Record<string, unknown>;
+    const styleRaw = p.trip_style;
+    if (Array.isArray(styleRaw) && styleRaw.length) {
+      setSelectedStyles(styleRaw.filter((v): v is string => typeof v === "string"));
+    } else if (typeof styleRaw === "string" && styleRaw.trim()) {
+      setSelectedStyles([styleRaw]);
+    }
+    if (typeof p.budget_band === "string" && p.budget_band.trim()) {
+      setBudget(p.budget_band);
+    }
+    if (typeof p.intent_text === "string") {
+      setIntentText(p.intent_text);
+    }
+    if (typeof p.pace === "string" && p.pace.trim()) {
+      setPace(p.pace);
+    }
+    if (typeof p.crowd_pref === "string" && p.crowd_pref.trim()) {
+      setCrowdPref(p.crowd_pref);
+    }
+  }, [profile?.preferences]);
+
   const toggleStyle = (style: string) => {
     setSelectedStyles((prev) =>
       prev.includes(style) ? prev.filter((s) => s !== style) : [...prev, style]
     );
   };
+
+  const savePreferencesMutation = useMutation({
+    mutationFn: async () => {
+      const currentPreferences =
+        profile?.preferences && typeof profile.preferences === "object"
+          ? (profile.preferences as Record<string, unknown>)
+          : {};
+      return updateUserProfile({
+        preferences: {
+          ...currentPreferences,
+          trip_style: selectedStyles,
+          budget_band: budget,
+          intent_text: intentText.trim(),
+          pace,
+          crowd_pref: crowdPref,
+        },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      queryClient.invalidateQueries({ queryKey: ["home-recommendations"] });
+      toast({ title: "Preferences saved", description: "AI preferences updated successfully." });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Save failed",
+        description: error.message || "Could not save preferences",
+        variant: "destructive",
+      });
+    },
+  });
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -138,7 +201,51 @@ export default function Profile() {
                 </Select>
               </div>
 
-              <Button className="w-full">Save Preferences</Button>
+              <div className="space-y-3">
+                <Label className="text-sm font-medium text-heading">Describe your ideal trip intent</Label>
+                <Input
+                  value={intentText}
+                  onChange={(e) => setIntentText(e.target.value)}
+                  placeholder="e.g., Relaxing weekend family trip under PKR 30,000 with shorter travel time"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Pace</Label>
+                  <Select value={pace} onValueChange={setPace}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="slow">Slow</SelectItem>
+                      <SelectItem value="moderate">Moderate</SelectItem>
+                      <SelectItem value="fast">Fast</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Crowd preference</Label>
+                  <Select value={crowdPref} onValueChange={setCrowdPref}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="quiet">Quiet</SelectItem>
+                      <SelectItem value="balanced">Balanced</SelectItem>
+                      <SelectItem value="popular">Popular</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <Button
+                className="w-full"
+                onClick={() => savePreferencesMutation.mutate()}
+                disabled={savePreferencesMutation.isPending}
+              >
+                Save Preferences
+              </Button>
 
               <Button
                 variant="outline"
