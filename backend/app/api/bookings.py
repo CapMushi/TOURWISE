@@ -50,6 +50,7 @@ class BookingResponse(BaseModel):
     booking_date: datetime
     status: str
     number_of_seats: int
+    unit_price_at_booking: Optional[Decimal] = None
     total_price: Decimal
     passenger_names: List[str]
     contact_email: str
@@ -73,6 +74,20 @@ class UpdateBookingRequest(BaseModel):
     contact_phone: Optional[str] = None
     special_requests: Optional[str] = None
     passengers: Optional[List[PassengerInfo]] = None
+
+
+def _resolve_unit_price(booking: dict, trip: Optional[dict]) -> Decimal:
+    """Prefer immutable booking snapshot; fall back to trip price for legacy rows."""
+    if booking.get("unit_price_at_booking") is not None:
+        return Decimal(str(booking["unit_price_at_booking"]))
+    if booking.get("number_of_seats"):
+        try:
+            return Decimal(str(booking["total_price"])) / Decimal(str(booking["number_of_seats"]))
+        except Exception:
+            pass
+    if trip and trip.get("price") is not None:
+        return Decimal(str(trip["price"]))
+    return Decimal("0")
 
 
 def generate_booking_reference() -> str:
@@ -413,6 +428,7 @@ async def create_booking(
             "booking_date": datetime.utcnow().isoformat(),
             "status": "confirmed",  # Auto-confirm since payment is assumed successful
             "number_of_seats": booking_data.number_of_seats,
+            "unit_price_at_booking": float(trip_price),
             "total_price": float(total_price),
             "passenger_names": [p.full_name for p in booking_data.passengers],
             "contact_email": booking_data.contact_email,
@@ -470,10 +486,7 @@ async def create_booking(
             "available_seats": new_available_seats
         }).eq("trip_id", booking_data.trip_id).execute()
         
-        # Create notification
-        agent_result = supabase.table("travel_agent").select("name").eq("agent_id", trip["agent_id"]).execute()
-        agent_name = agent_result.data[0].get("name") if agent_result.data else None
-        
+        # Notify traveler
         _create_booking_notification(
             supabase=supabase,
             booking_id=booking_id,
@@ -482,6 +495,25 @@ async def create_booking(
             title="Booking Confirmed",
             message=f"Your booking {booking_reference} for {trip['origin_city']} -> {trip['destination_city']} has been confirmed.",
         )
+
+        # Notify the travel agent that a new booking was made on their trip
+        agent_result = supabase.table("travel_agent").select("name, user_id").eq("agent_id", trip["agent_id"]).execute()
+        agent_name = agent_result.data[0].get("name") if agent_result.data else None
+        if agent_result.data:
+            agent_user_id = agent_result.data[0]["user_id"]
+            passenger_names_str = ", ".join([p.full_name for p in booking_data.passengers])
+            _create_booking_notification(
+                supabase=supabase,
+                booking_id=booking_id,
+                user_id=agent_user_id,
+                notification_type="new_booking",
+                title="New Booking on Your Trip",
+                message=(
+                    f"{booking_data.number_of_seats} seat(s) booked on your trip "
+                    f"{trip['origin_city']} → {trip['destination_city']} "
+                    f"(Ref: {booking_reference}). Passengers: {passenger_names_str}."
+                ),
+            )
         
         # Get agent name for response
         return BookingResponse(
@@ -492,6 +524,7 @@ async def create_booking(
             booking_date=datetime.fromisoformat(created_booking["booking_date"].replace("Z", "+00:00")),
             status=created_booking["status"],
             number_of_seats=created_booking["number_of_seats"],
+            unit_price_at_booking=_resolve_unit_price(created_booking, trip),
             total_price=Decimal(str(created_booking["total_price"])),
             passenger_names=created_booking["passenger_names"],
             contact_email=created_booking["contact_email"],
@@ -509,7 +542,7 @@ async def create_booking(
                 "destination_city": trip["destination_city"],
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
-                "price": float(trip["price"]),
+                "price": float(_resolve_unit_price(created_booking, trip)),
             },
             agent_name=agent_name,
             booking_source="local",
@@ -563,6 +596,7 @@ async def get_my_bookings(
                 booking_date=datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00")),
                 status=booking["status"],
                 number_of_seats=booking["number_of_seats"],
+                unit_price_at_booking=_resolve_unit_price(booking, trip),
                 total_price=Decimal(str(booking["total_price"])),
                 passenger_names=booking.get("passenger_names", []),
                 contact_email=booking["contact_email"],
@@ -580,7 +614,7 @@ async def get_my_bookings(
                     "destination_city": trip["destination_city"],
                     "departure_time": trip["departure_time"],
                     "arrival_time": trip["arrival_time"],
-                    "price": float(trip["price"]),
+                    "price": float(_resolve_unit_price(booking, trip)),
                 } if trip else None,
                 agent_name=agent_name,
                 booking_source="local",
@@ -659,6 +693,7 @@ async def get_booking_by_id(
             booking_date=datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00")),
             status=booking["status"],
             number_of_seats=booking["number_of_seats"],
+            unit_price_at_booking=_resolve_unit_price(booking, trip),
             total_price=Decimal(str(booking["total_price"])),
             passenger_names=booking.get("passenger_names", []),
             contact_email=booking["contact_email"],
@@ -676,7 +711,7 @@ async def get_booking_by_id(
                 "destination_city": trip["destination_city"],
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
-                "price": float(trip["price"]),
+                "price": float(_resolve_unit_price(booking, trip)),
             } if trip else None,
             agent_name=agent_name,
             booking_source="local",
@@ -785,6 +820,7 @@ async def cancel_booking(
             booking_date=datetime.fromisoformat(updated_booking["booking_date"].replace("Z", "+00:00")),
             status=updated_booking["status"],
             number_of_seats=updated_booking["number_of_seats"],
+            unit_price_at_booking=_resolve_unit_price(updated_booking, trip),
             total_price=Decimal(str(updated_booking["total_price"])),
             passenger_names=updated_booking.get("passenger_names", []),
             contact_email=updated_booking["contact_email"],
@@ -802,7 +838,7 @@ async def cancel_booking(
                 "destination_city": trip["destination_city"],
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
-                "price": float(trip["price"]),
+                "price": float(_resolve_unit_price(updated_booking, trip)),
             },
             agent_name=agent_name,
             booking_source="local",
@@ -816,3 +852,148 @@ async def cancel_booking(
             detail=f"Error cancelling booking: {str(e)}",
         )
 
+
+# ---------------------------------------------------------------------------
+# Agent-facing: view all passengers booked on the agent's trips
+# ---------------------------------------------------------------------------
+
+class PassengerDetail(BaseModel):
+    booking_id: int
+    booking_reference: str
+    booking_date: datetime
+    status: str
+    number_of_seats: int
+    total_price: Decimal
+    contact_email: str
+    contact_phone: str
+    special_requests: Optional[str] = None
+    passengers: List[PassengerInfo]
+
+
+class TripWithPassengers(BaseModel):
+    trip_id: int
+    origin_city: str
+    destination_city: str
+    departure_time: datetime
+    arrival_time: datetime
+    price: Decimal
+    transport_type: str
+    total_seats: int
+    available_seats: int
+    bookings: List[PassengerDetail]
+    total_booked_seats: int
+
+
+@router.get("/agent/passengers", response_model=List[TripWithPassengers])
+async def get_agent_trip_passengers(
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """
+    Return all trips owned by the current agent, each with their bookings and
+    full passenger details.  Only accessible to travel agents.
+    """
+    try:
+        agent_res = (
+            supabase.table("travel_agent")
+            .select("agent_id")
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not agent_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not a travel agent",
+            )
+        agent_id = agent_res.data[0]["agent_id"]
+
+        trips_res = (
+            supabase.table("trips")
+            .select("*")
+            .eq("agent_id", agent_id)
+            .order("departure_time", desc=False)
+            .execute()
+        )
+        trips = trips_res.data or []
+
+        result: List[TripWithPassengers] = []
+        for trip in trips:
+            trip_id = trip["trip_id"]
+
+            bookings_res = (
+                supabase.table("booking")
+                .select("*")
+                .eq("trip_id", trip_id)
+                .neq("status", "cancelled")
+                .order("booking_date", desc=True)
+                .execute()
+            )
+            bookings_raw = bookings_res.data or []
+
+            trip_bookings: List[PassengerDetail] = []
+            for b in bookings_raw:
+                pax_res = (
+                    supabase.table("booking_passengers")
+                    .select("*")
+                    .eq("booking_id", b["booking_id"])
+                    .execute()
+                )
+                passengers: List[PassengerInfo] = [
+                    PassengerInfo(
+                        full_name=p["full_name"],
+                        age=p.get("age"),
+                        gender=p.get("gender"),
+                        passport_number=p.get("passport_number"),
+                        emergency_contact_name=p.get("emergency_contact_name"),
+                        emergency_contact_phone=p.get("emergency_contact_phone"),
+                        dietary_restrictions=p.get("dietary_restrictions"),
+                        medical_conditions=p.get("medical_conditions"),
+                    )
+                    for p in (pax_res.data or [])
+                ]
+                trip_bookings.append(
+                    PassengerDetail(
+                        booking_id=b["booking_id"],
+                        booking_reference=b["booking_reference"],
+                        booking_date=datetime.fromisoformat(
+                            b["booking_date"].replace("Z", "+00:00")
+                        ),
+                        status=b["status"],
+                        number_of_seats=b["number_of_seats"],
+                        total_price=Decimal(str(b["total_price"])),
+                        contact_email=b["contact_email"],
+                        contact_phone=b["contact_phone"],
+                        special_requests=b.get("special_requests"),
+                        passengers=passengers,
+                    )
+                )
+
+            total_booked = sum(b.number_of_seats for b in trip_bookings)
+            result.append(
+                TripWithPassengers(
+                    trip_id=trip_id,
+                    origin_city=trip["origin_city"],
+                    destination_city=trip["destination_city"],
+                    departure_time=datetime.fromisoformat(
+                        trip["departure_time"].replace("Z", "+00:00")
+                    ),
+                    arrival_time=datetime.fromisoformat(
+                        trip["arrival_time"].replace("Z", "+00:00")
+                    ),
+                    price=Decimal(str(trip["price"])),
+                    transport_type=trip["transport_type"],
+                    total_seats=trip["total_seats"],
+                    available_seats=trip["available_seats"],
+                    bookings=trip_bookings,
+                    total_booked_seats=total_booked,
+                )
+            )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching agent passengers: {str(e)}",
+        )

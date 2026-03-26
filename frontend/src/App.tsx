@@ -37,6 +37,9 @@ import CollaborationHub from "./pages/CollaborationHub";
 import TravelerNotifications from "./pages/TravelerNotifications";
 import EditProfile from "./pages/EditProfile";
 import ExploreTrips from "./pages/ExploreTrips";
+import AgentReviews from "./pages/AgentReviews";
+import AgentProfile from "./pages/AgentProfile";
+import AgentPassengers from "./pages/AgentPassengers";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
@@ -120,6 +123,16 @@ const App = () => (
                 <ProtectedRoute>
                   <AppLayout userRole="traveler">
                     <ExploreTrips />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent-reviews"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <AgentReviews />
                   </AppLayout>
                 </ProtectedRoute>
               }
@@ -239,7 +252,17 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <AppLayout userRole="agent">
-                    <div className="p-8">Profile (Coming Soon)</div>
+                    <AgentProfile />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent/passengers"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="agent">
+                    <AgentPassengers />
                   </AppLayout>
                 </ProtectedRoute>
               }

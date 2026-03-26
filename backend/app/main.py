@@ -12,6 +12,7 @@ from app.api import (
     notifications,
     integrations,
     recommendations,
+    reviews,
     chat,
 )
 
@@ -22,22 +23,18 @@ app = FastAPI(
 )
 
 # Configure CORS
-# Allow localhost and common local network IPs for development
+# Allow localhost and any local network IP for development
 cors_origins = [
     "http://localhost:8080",
     "http://localhost:5173",
     "http://127.0.0.1:8080",
     "http://127.0.0.1:5173",
-    # Allow local network IPs (e.g., when accessing via http://192.168.x.x:8080)
-    # This pattern covers common local network ranges
-    "http://192.168.1.8:8080",
-    "http://192.168.1.8:5173",
-    # Add more specific IPs as needed for your network
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"http://192\.168\.\d+\.\d+:(8080|5173|3000)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +54,7 @@ app.include_router(
 )
 app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(reviews.router, prefix="/api/reviews", tags=["reviews"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])

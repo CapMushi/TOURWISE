@@ -318,7 +318,7 @@ export default function MyBookings() {
                 <div className="flex gap-2 pt-4 border-t border-border">
                   <Button
                     variant="outline"
-                    onClick={() => navigate(`/trip-details/${booking.trip_id}`)}
+                    onClick={() => navigate(`/trip/${booking.trip_id}`)}
                   >
                     <FileText className="h-4 w-4 mr-2" />
                     View Trip Details

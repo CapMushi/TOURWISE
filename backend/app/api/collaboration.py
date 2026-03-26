@@ -36,6 +36,7 @@ class TripWithAgent(BaseModel):
     available_seats: int
     suitability: Optional[str] = None
     image_url: Optional[str] = None
+    is_tour_package: Optional[bool] = None
 
 
 class MatchingTrip(BaseModel):
@@ -93,45 +94,76 @@ class AgentMessageResponse(BaseModel):
     created_at: datetime
 
 
-def trips_match_for_pooling(trip1: dict, trip2: dict) -> bool:
+def compute_match_score(trip1: dict, trip2: dict) -> Optional[float]:
     """
-    Check if two trips are suitable for bus pooling.
-    Criteria: same origin, destination, date (any time), and suitability.
+    Compute a match quality score (0.0–1.0) for bus-pooling eligibility.
+
+    Matching requires same origin AND same destination city (case-insensitive).
+    That baseline gives 0.30.  Additional criteria add further points:
+
+    +0.30  departure times are within 2 hours of each other
+    +0.20  arrival times are within 2 hours of each other
+    +0.20  available seat counts are within 20 % of each other
+
+    Returns None when the trips do not share both origin and destination
+    (i.e. they are ineligible for pooling regardless of score).
+    Both trips must also have at least 1 available seat.
     """
-    # Same origin and destination
-    if trip1.get("origin_city") != trip2.get("origin_city"):
-        return False
-    if trip1.get("destination_city") != trip2.get("destination_city"):
-        return False
-    
-    # Same suitability
-    suitability1 = trip1.get("suitability") or ""
-    suitability2 = trip2.get("suitability") or ""
-    if suitability1 != suitability2:
-        return False
-    
-    # Same date (any time in the day is fine)
-    dep1 = trip1.get("departure_time")
-    dep2 = trip2.get("departure_time")
-    
-    if not dep1 or not dep2:
-        return False
-    
-    # Convert to date objects for comparison
-    if isinstance(dep1, str):
-        dep1 = datetime.fromisoformat(dep1.replace('Z', '+00:00'))
-    if isinstance(dep2, str):
-        dep2 = datetime.fromisoformat(dep2.replace('Z', '+00:00'))
-    
-    # Compare dates only (ignore time)
-    if dep1.date() != dep2.date():
-        return False
-    
-    # Both trips should have available seats
+    # Require available seats
     if trip1.get("available_seats", 0) <= 0 or trip2.get("available_seats", 0) <= 0:
-        return False
-    
-    return True
+        return None
+
+    # --- Mandatory: same origin city -----------------------------------------
+    orig1 = (trip1.get("origin_city") or "").strip().lower()
+    orig2 = (trip2.get("origin_city") or "").strip().lower()
+    if not orig1 or not orig2 or orig1 != orig2:
+        return None
+
+    # --- Mandatory: same destination city ------------------------------------
+    dest1 = (trip1.get("destination_city") or "").strip().lower()
+    dest2 = (trip2.get("destination_city") or "").strip().lower()
+    if not dest1 or not dest2 or dest1 != dest2:
+        return None
+
+    score = 0.30  # base: same origin + destination
+
+    # --- Parse departure / arrival times -------------------------------------
+    def _parse_dt(val) -> Optional[datetime]:
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val
+        try:
+            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    dep1 = _parse_dt(trip1.get("departure_time"))
+    dep2 = _parse_dt(trip2.get("departure_time"))
+    arr1 = _parse_dt(trip1.get("arrival_time"))
+    arr2 = _parse_dt(trip2.get("arrival_time"))
+
+    TWO_HOURS = 2 * 3600  # seconds
+
+    if dep1 and dep2:
+        dep_diff = abs((dep1 - dep2).total_seconds())
+        if dep_diff <= TWO_HOURS:
+            score += 0.30
+
+    if arr1 and arr2:
+        arr_diff = abs((arr1 - arr2).total_seconds())
+        if arr_diff <= TWO_HOURS:
+            score += 0.20
+
+    # --- Available seats within 20 % -----------------------------------------
+    seats1 = trip1.get("available_seats", 0)
+    seats2 = trip2.get("available_seats", 0)
+    if seats1 > 0 and seats2 > 0:
+        ratio = min(seats1, seats2) / max(seats1, seats2)
+        if ratio >= 0.80:
+            score += 0.20
+
+    return round(min(score, 1.0), 2)
 
 
 @router.get("/agents", response_model=List[AgentInfo])
@@ -250,6 +282,7 @@ async def get_other_agents_trips(
                 available_seats=trip["available_seats"],
                 suitability=trip.get("suitability"),
                 image_url=trip.get("image_url"),
+                is_tour_package=trip.get("is_tour_package"),
             ))
         
         return trips
@@ -301,53 +334,58 @@ async def get_matching_trips(
             for agent in agents_result.data:
                 agent_names_map[agent["agent_id"]] = agent.get("name")
         
-        # Find matches
+        # Find matches using the multi-criteria scoring function
         matches = []
         for my_trip in my_trips_result.data:
             for other_trip in other_trips_result.data:
-                if trips_match_for_pooling(my_trip, other_trip):
-                    match_trip = TripWithAgent(
-                        trip_id=other_trip["trip_id"],
-                        agent_id=other_trip["agent_id"],
-                        agent_name=agent_names_map.get(other_trip["agent_id"]),
-                        origin_city=other_trip["origin_city"],
-                        destination_province=other_trip["destination_province"],
-                        destination_city=other_trip["destination_city"],
-                        departure_time=other_trip["departure_time"],
-                        arrival_time=other_trip["arrival_time"],
-                        price=other_trip["price"],
-                        transport_type=other_trip["transport_type"],
-                        total_seats=other_trip["total_seats"],
-                        available_seats=other_trip["available_seats"],
-                        suitability=other_trip.get("suitability"),
-                        image_url=other_trip.get("image_url"),
-                    )
-                    
-                    my_trip_with_agent = TripWithAgent(
-                        trip_id=my_trip["trip_id"],
-                        agent_id=my_trip["agent_id"],
-                        agent_name=None,
-                        origin_city=my_trip["origin_city"],
-                        destination_province=my_trip["destination_province"],
-                        destination_city=my_trip["destination_city"],
-                        departure_time=my_trip["departure_time"],
-                        arrival_time=my_trip["arrival_time"],
-                        price=my_trip["price"],
-                        transport_type=my_trip["transport_type"],
-                        total_seats=my_trip["total_seats"],
-                        available_seats=my_trip["available_seats"],
-                        suitability=my_trip.get("suitability"),
-                        image_url=my_trip.get("image_url"),
-                    )
-                    
-                    # Calculate match score (1.0 for perfect match)
-                    match_score = 1.0
-                    matches.append(MatchingTrip(
-                        trip=match_trip,
-                        my_trip=my_trip_with_agent,
-                        match_score=match_score,
-                    ))
-        
+                score = compute_match_score(my_trip, other_trip)
+                if score is None:
+                    continue  # ineligible (different origin or destination)
+
+                match_trip = TripWithAgent(
+                    trip_id=other_trip["trip_id"],
+                    agent_id=other_trip["agent_id"],
+                    agent_name=agent_names_map.get(other_trip["agent_id"]),
+                    origin_city=other_trip["origin_city"],
+                    destination_province=other_trip["destination_province"],
+                    destination_city=other_trip["destination_city"],
+                    departure_time=other_trip["departure_time"],
+                    arrival_time=other_trip["arrival_time"],
+                    price=other_trip["price"],
+                    transport_type=other_trip["transport_type"],
+                    total_seats=other_trip["total_seats"],
+                    available_seats=other_trip["available_seats"],
+                    suitability=other_trip.get("suitability"),
+                    image_url=other_trip.get("image_url"),
+                    is_tour_package=other_trip.get("is_tour_package"),
+                )
+
+                my_trip_with_agent = TripWithAgent(
+                    trip_id=my_trip["trip_id"],
+                    agent_id=my_trip["agent_id"],
+                    agent_name=None,
+                    origin_city=my_trip["origin_city"],
+                    destination_province=my_trip["destination_province"],
+                    destination_city=my_trip["destination_city"],
+                    departure_time=my_trip["departure_time"],
+                    arrival_time=my_trip["arrival_time"],
+                    price=my_trip["price"],
+                    transport_type=my_trip["transport_type"],
+                    total_seats=my_trip["total_seats"],
+                    available_seats=my_trip["available_seats"],
+                    suitability=my_trip.get("suitability"),
+                    image_url=my_trip.get("image_url"),
+                    is_tour_package=my_trip.get("is_tour_package"),
+                )
+
+                matches.append(MatchingTrip(
+                    trip=match_trip,
+                    my_trip=my_trip_with_agent,
+                    match_score=score,
+                ))
+
+        # Sort best matches first
+        matches.sort(key=lambda m: m.match_score, reverse=True)
         return matches
     
     except HTTPException:
@@ -392,9 +430,12 @@ async def create_bus_pooling_request(
         requester_trip = requester_trip_result.data[0]
         
         # Get target trip and agent
-        target_trip_result = supabase.table("trips").select(
-            "*, travel_agent!inner(agent_id, agent_name)"
-        ).eq("trip_id", request_data.target_trip_id).execute()
+        target_trip_result = (
+            supabase.table("trips")
+            .select("*")
+            .eq("trip_id", request_data.target_trip_id)
+            .execute()
+        )
         
         if not target_trip_result.data:
             raise HTTPException(
@@ -412,11 +453,11 @@ async def create_bus_pooling_request(
                 detail="Cannot create pooling request with yourself",
             )
         
-        # Validate trips match for pooling
-        if not trips_match_for_pooling(requester_trip, target_trip):
+        # Validate trips match for pooling (must share same origin AND destination)
+        if compute_match_score(requester_trip, target_trip) is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Trips do not match pooling criteria (same origin, destination, date, suitability)",
+                detail="Trips do not match pooling criteria (must share the same origin and destination city)",
             )
         
         # Validate seat_management
@@ -491,6 +532,7 @@ async def create_bus_pooling_request(
                 available_seats=requester_trip["available_seats"],
                 suitability=requester_trip.get("suitability"),
                 image_url=requester_trip.get("image_url"),
+                is_tour_package=requester_trip.get("is_tour_package"),
             ),
             target_trip=TripWithAgent(
                 trip_id=target_trip["trip_id"],
@@ -507,6 +549,7 @@ async def create_bus_pooling_request(
                 available_seats=target_trip["available_seats"],
                 suitability=target_trip.get("suitability"),
                 image_url=target_trip.get("image_url"),
+                is_tour_package=target_trip.get("is_tour_package"),
             ),
             status=created_request["status"],
             message=created_request.get("message"),
@@ -597,6 +640,7 @@ async def get_bus_pooling_requests(
                     available_seats=requester_trip["available_seats"],
                     suitability=requester_trip.get("suitability"),
                     image_url=requester_trip.get("image_url"),
+                    is_tour_package=requester_trip.get("is_tour_package"),
                 ),
                 target_trip=TripWithAgent(
                     trip_id=target_trip["trip_id"],
@@ -613,6 +657,7 @@ async def get_bus_pooling_requests(
                     available_seats=target_trip["available_seats"],
                     suitability=target_trip.get("suitability"),
                     image_url=target_trip.get("image_url"),
+                    is_tour_package=target_trip.get("is_tour_package"),
                 ),
                 status=req["status"],
                 message=req.get("message"),
@@ -756,6 +801,7 @@ async def update_bus_pooling_request(
                 available_seats=requester_trip["available_seats"],
                 suitability=requester_trip.get("suitability"),
                 image_url=requester_trip.get("image_url"),
+                is_tour_package=requester_trip.get("is_tour_package"),
             ),
             target_trip=TripWithAgent(
                 trip_id=target_trip["trip_id"],
@@ -772,6 +818,7 @@ async def update_bus_pooling_request(
                 available_seats=target_trip["available_seats"],
                 suitability=target_trip.get("suitability"),
                 image_url=target_trip.get("image_url"),
+                is_tour_package=target_trip.get("is_tour_package"),
             ),
             status=updated_request["status"],
             message=updated_request.get("message"),

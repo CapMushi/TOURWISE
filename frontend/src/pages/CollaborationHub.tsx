@@ -314,7 +314,7 @@ export default function CollaborationHub() {
         <Card className="glass-card border-0">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-heading">Matching</CardTitle>
-            <CardDescription>Same route / date trips you can pool</CardDescription>
+            <CardDescription>Same origin &amp; destination city</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-heading">{matchingTrips?.length ?? 0}</p>
@@ -521,8 +521,23 @@ export default function CollaborationHub() {
                 <Card key={index} className="border-2 border-primary/20">
                   <CardHeader>
                     <div className="flex items-center justify-between">
-                      <CardTitle>Perfect Match Found!</CardTitle>
-                      <Badge variant="default" className="bg-green-500">
+                      <CardTitle>
+                        {match.match_score >= 0.9
+                          ? "Excellent Match!"
+                          : match.match_score >= 0.6
+                          ? "Good Match"
+                          : "Potential Match"}
+                      </CardTitle>
+                      <Badge
+                        variant="default"
+                        className={
+                          match.match_score >= 0.9
+                            ? "bg-green-500"
+                            : match.match_score >= 0.6
+                            ? "bg-yellow-500"
+                            : "bg-blue-400"
+                        }
+                      >
                         Match Score: {(match.match_score * 100).toFixed(0)}%
                       </Badge>
                     </div>
@@ -979,14 +994,14 @@ function PoolingRequestForm({
   const [selectedBusAgent, setSelectedBusAgent] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
-  // Filter matching trips
+  // Filter: same origin city AND same destination city (required criteria for pooling)
   const matchingMyTrips = myTrips.filter((trip) => {
-    if (trip.origin_city !== targetTrip.origin_city) return false;
-    if (trip.destination_city !== targetTrip.destination_city) return false;
-    if (trip.suitability !== targetTrip.suitability) return false;
-    const tripDate = trip.departure_time ? new Date(trip.departure_time).toDateString() : "";
-    const targetDate = targetTrip.departure_time ? new Date(targetTrip.departure_time).toDateString() : "";
-    if (tripDate !== targetDate) return false;
+    const myOrig = (trip.origin_city || "").trim().toLowerCase();
+    const targetOrig = (targetTrip.origin_city || "").trim().toLowerCase();
+    if (!myOrig || myOrig !== targetOrig) return false;
+    const myDest = (trip.destination_city || "").trim().toLowerCase();
+    const targetDest = (targetTrip.destination_city || "").trim().toLowerCase();
+    if (!myDest || myDest !== targetDest) return false;
     return trip.available_seats > 0;
   });
 
@@ -1030,7 +1045,9 @@ function PoolingRequestForm({
           </SelectContent>
         </Select>
         {matchingMyTrips.length === 0 && (
-          <p className="text-sm text-destructive mt-1">No matching trips found. Make sure you have a trip with the same route, date, and suitability.</p>
+          <p className="text-sm text-destructive mt-1">
+            No matching trips found. You need a trip with the same origin and destination city.
+          </p>
         )}
       </div>
 

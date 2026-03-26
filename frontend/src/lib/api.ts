@@ -44,6 +44,7 @@ export interface TripResponse {
   created_at: string;
   agent_name?: string;
   image_url?: string;
+  is_tour_package?: boolean;
   suitability?: string;
   image_gallery?: string[];
   /** local = Supabase trips; external = integration layer (synthetic trip_id) */
@@ -488,6 +489,157 @@ export async function getTopAgents(limit: number = 4): Promise<TopAgentsResponse
   });
 }
 
+// Traveler reviews for agents
+export interface ReviewAgentItem {
+  agent_id: number;
+  name: string;
+  email?: string | null;
+  rating?: number | null;
+  numberofreviews?: number | null;
+  verification_status?: string | null;
+  contact_info?: Record<string, unknown> | null;
+  profile_details?: Record<string, unknown> | null;
+}
+
+export interface AgentReviewItem {
+  review_id: number;
+  agent_id: number;
+  user_id: string;
+  username?: string | null;
+  rating: number;
+  comment?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface UpsertAgentReviewRequest {
+  rating: number;
+  comment?: string;
+}
+
+export async function getReviewableAgents(): Promise<ReviewAgentItem[]> {
+  return apiClient<ReviewAgentItem[]>("/api/reviews/agents", { method: "GET" });
+}
+
+export async function getAgentReviews(agentId: number): Promise<AgentReviewItem[]> {
+  return apiClient<AgentReviewItem[]>(`/api/reviews/agents/${agentId}/reviews`, { method: "GET" });
+}
+
+export async function upsertAgentReview(
+  agentId: number,
+  payload: UpsertAgentReviewRequest
+): Promise<AgentReviewItem> {
+  return apiClient<AgentReviewItem>(`/api/reviews/agents/${agentId}/reviews`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface AgentPublicTrip {
+  trip_id: number;
+  origin_city: string;
+  destination_city: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  transport_type: string;
+  total_seats: number;
+  available_seats: number;
+  suitability?: string | null;
+  image_url?: string | null;
+}
+
+export async function getAgentPublicTrips(agentId: number): Promise<AgentPublicTrip[]> {
+  return apiClient<AgentPublicTrip[]>(`/api/reviews/agents/${agentId}/trips`, { method: "GET" });
+}
+
+export interface MyAgentReview {
+  review_id: number;
+  agent_id: number;
+  rating: number;
+  comment?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export async function getMyReviewForAgent(agentId: number): Promise<MyAgentReview | null> {
+  return apiClient<MyAgentReview | null>(`/api/reviews/agents/${agentId}/my-review`, { method: "GET" });
+}
+
+// Agent profile (agent's own view)
+export interface AgentProfileData {
+  agent_id: number;
+  user_id: string;
+  name?: string | null;
+  email?: string | null;
+  verification_status?: string | null;
+  rating?: number | null;
+  numberofreviews?: number | null;
+  contact_info?: Record<string, unknown> | null;
+  profile_details?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+export interface AgentProfileUpdate {
+  name?: string;
+  contact_info?: Record<string, unknown>;
+  profile_details?: Record<string, unknown>;
+}
+
+export async function getAgentProfile(): Promise<AgentProfileData> {
+  return apiClient<AgentProfileData>("/api/profile/agent", { method: "GET" });
+}
+
+export async function updateAgentProfile(payload: AgentProfileUpdate): Promise<AgentProfileData> {
+  return apiClient<AgentProfileData>("/api/profile/agent", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Agent passenger view
+export interface PassengerDetail {
+  full_name: string;
+  age?: number | null;
+  gender?: string | null;
+  passport_number?: string | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  dietary_restrictions?: string | null;
+  medical_conditions?: string | null;
+}
+
+export interface TripBookingEntry {
+  booking_id: number;
+  booking_reference: string;
+  booking_date: string;
+  status: string;
+  number_of_seats: number;
+  total_price: number;
+  contact_email: string;
+  contact_phone: string;
+  special_requests?: string | null;
+  passengers: PassengerDetail[];
+}
+
+export interface TripWithPassengers {
+  trip_id: number;
+  origin_city: string;
+  destination_city: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  transport_type: string;
+  total_seats: number;
+  available_seats: number;
+  bookings: TripBookingEntry[];
+  total_booked_seats: number;
+}
+
+export async function getAgentTripPassengers(): Promise<TripWithPassengers[]> {
+  return apiClient<TripWithPassengers[]>("/api/bookings/agent/passengers", { method: "GET" });
+}
+
 /**
  * Upload trip image to Supabase Storage
  */
@@ -555,6 +707,7 @@ export interface BookingResponse {
   booking_date: string;
   status: string;
   number_of_seats: number;
+  unit_price_at_booking?: number;
   total_price: number;
   passenger_names: string[];
   contact_email: string;
@@ -654,6 +807,7 @@ export interface TripWithAgent {
   available_seats: number;
   suitability?: string;
   image_url?: string;
+  is_tour_package?: boolean;
 }
 
 // Matching Trip

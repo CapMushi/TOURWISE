@@ -50,6 +50,7 @@
 -- created_at
 -- suitability             — insert required by API defaulting to Solo Travelers
 -- image_url (text, null)  — update via PATCH /api/trips/{id}; sync from trip_images cover
+-- is_tour_package (bool)  — optional tour package marker for cards/badges
 -- origin_lat, origin_lng, destination_lat, destination_lng — select * paths
 
 
@@ -69,7 +70,7 @@
 -- booking_id (bigint, PK)
 -- user_id (uuid), trip_id (bigint), itinerary_id (bigint, null)
 -- booking_date, status
--- number_of_seats, total_price
+-- number_of_seats, unit_price_at_booking, total_price
 -- passenger_names (text[])
 -- contact_email, contact_phone, special_requests
 -- booking_reference (unique)
@@ -87,6 +88,16 @@
 -- emergency_contact_name, emergency_contact_phone
 -- dietary_restrictions, medical_conditions
 -- created_at
+
+
+-- -----------------------------------------------------------------------------
+-- agent_reviews  (reviews.py)
+-- -----------------------------------------------------------------------------
+-- review_id (bigint, PK)
+-- agent_id (bigint, FK → travel_agent)
+-- user_id (uuid, FK → profiles.id)
+-- rating, comment
+-- created_at, updated_at
 
 
 -- -----------------------------------------------------------------------------
