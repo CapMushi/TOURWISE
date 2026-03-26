@@ -1,0 +1,130 @@
+---
+name: "Google Maps Integration – Option B (Interactive Maps JavaScript API)"
+description: "Implementation rules for adding interactive Google Maps (Maps JS API + API key) in a beginner-friendly, low-risk way."
+when:
+  - always: true
+targets:
+  - type: workspace
+    pattern: "**"
+---
+
+## Goal
+- Add an interactive Google Map to the frontend using the **Google Maps JavaScript API** (Option B).
+- Keep the integration small, reliable, and easy to debug for newcomers.
+- Do not break existing trip flows (loading, error states, booking, favorites).
+
+## Scope (what to implement)
+- Frontend-only integration.
+- A reusable map component that can be dropped into `TripDetails` (and later other pages).
+- Script loading + marker rendering.
+- Basic error handling and safe fallbacks when geocoding or the Maps script fails.
+
+## Out of Scope (what NOT to do)
+- Do not build a full routing/traffic/planning product using Maps.
+- Do not require backend database migrations for the first working version.
+- Do not expose the Google API key outside the frontend environment variables.
+
+## Prerequisites / Setup
+### 1) Google Cloud key
+- Create a Google Cloud API key.
+- Enable **Google Maps JavaScript API**.
+- If you plan to convert city/province strings into lat/lng, also enable **Geocoding API**.
+
+### 2) Restrict the key (important)
+- Restrict the API key by **HTTP referrer** (recommended) so it only works for your frontend origins.
+- Add both `localhost` and any network IP origins you use during development.
+
+### 3) Store the key in frontend env
+- Add `VITE_GOOGLE_MAPS_API_KEY=...` to `frontend/.env`.
+- Remember: Vite only exposes env vars prefixed with `VITE_`.
+- Do not commit secrets. If you have a template env file, add the variable name there without the real value.
+
+## Implementation Approach (Option B)
+Use the Maps JavaScript API directly (no heavy component libraries required).
+
+### 1) Create a small reusable map component
+- Create a new component (recommended path):
+  - `frontend/src/components/maps/GoogleMaps.tsx` (or `GoogleMap.tsx`)
+- Props (beginner-friendly, keep it simple):
+  - `height?: string | number` (or a className)
+  - `center?: { lat: number; lng: number }` (optional)
+  - `markers?: Array<{ lat: number; lng: number; label?: string }>` (optional)
+  - `addressLabel?: string` (optional, used for accessibility / fallback)
+  - `zoom?: number` (optional, default something like 12)
+
+### 2) Load the Maps script safely
+- Implement script injection once (idempotent).
+- Handle these states:
+  - loading (show a skeleton/placeholder)
+  - loaded (render map)
+  - error (show an alert/toast and fallback UI)
+- Never put the API key directly in the JSX; only use it when building the script URL.
+
+### 3) Handle geocoding (city/province strings -> lat/lng)
+Your `TripDetails` currently uses:
+- `trip.origin_city`
+- `trip.destination_city`
+- `trip.destination_province`
+
+In the current codebase, the trip API response does **not** expose lat/lng, so you must choose one:
+
+#### Preferred beginner behavior: geocode destination only
+- Geocode only the destination address first.
+- Render 1 marker (destination) on the map.
+- This keeps costs and complexity low.
+
+Possible address formatting:
+- `"<destination_city>, <destination_province>"`
+- If province is missing/empty, geocode with just the city.
+
+#### Caching (highly recommended)
+- Cache geocoding results:
+  - in memory (simple Map keyed by address string)
+  - optionally in `localStorage` to reduce repeated calls
+- Add guardrails:
+  - only geocode when the page has a valid trip and a valid address string
+  - avoid firing multiple geocoding calls on re-renders
+
+### 4) Fallback behavior (must not cause blank pages)
+If Maps script fails OR geocoding fails:
+- Still show the trip details page normally.
+- Show:
+  - a small inline message like: “Map unavailable” OR
+  - a toast with a short message
+- Render a harmless fallback:
+  - either no map block, or
+  - a simple “destination address text” block, no iframe/JS map
+
+## Where to integrate first
+### Recommended first page: `TripDetails`
+- File in repo:
+  - `frontend/src/pages/TripDetails.tsx`
+- Add the map near the “Destination / Origin” section.
+- Use the destination city/province for the marker.
+
+### Later pages (optional)
+- After `TripDetails` works, you can add maps to:
+  - search results cards (small embed-only)
+  - booking pages (meeting point)
+- Start with destination marker, not full route overlays.
+
+## Error handling and debugging checklist
+- If the map doesn’t show:
+  - check console for 401/403 and referrer restrictions
+  - check your API key is present and valid in the browser network request
+  - verify Geocoding API is enabled (if geocoding is used)
+  - watch for quota limits
+- If geocoding fails:
+  - ensure address strings are non-empty
+  - use console logs only in development (do not log the key)
+
+## Done Criteria
+- On `TripDetails`, the page renders normally and does not blank out.
+- The Google Map loads (script loads successfully) OR the UI cleanly falls back.
+- At least one marker appears for the destination (after geocoding) OR a deterministic center is used if coordinates exist.
+- No API key leakage (key only in env and used only in script URL).
+
+## Notes on cost and safety
+- Geocoding can cost money and can hit quotas. Cache results and geocode sparingly.
+- Restrict API key by referrer for security.
+

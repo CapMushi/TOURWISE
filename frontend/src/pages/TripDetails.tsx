@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Check, X, MapPin, Calendar, Users, Banknote, Heart } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
+import { GoogleMapFromAddress } from "@/components/maps/GoogleMapFromAddress";
 
 export default function TripDetails() {
   const navigate = useNavigate();
@@ -66,6 +67,7 @@ export default function TripDetails() {
   const durationDays = Math.ceil(
     (arrivalDate.getTime() - departureDate.getTime()) / (1000 * 60 * 60 * 24)
   );
+  const destinationAddress = `${trip.destination_city}, ${trip.destination_province}`;
 
   const handleFavoriteToggle = async () => {
     if (!tripIdNum) return;
@@ -175,6 +177,21 @@ export default function TripDetails() {
                 <span className="font-medium">Available Seats:</span>
                 <span>{trip.available_seats} / {trip.total_seats}</span>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Location Map */}
+          <Card className="glass-card border-0">
+            <CardHeader>
+              <CardTitle className="font-heading">🗺️ Destination Map</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <GoogleMapFromAddress
+                address={destinationAddress}
+                label="Destination"
+                heightClassName="h-72"
+                zoom={11}
+              />
             </CardContent>
           </Card>
 
