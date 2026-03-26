@@ -58,6 +58,7 @@ class TripResponse(BaseModel):
     # Optional fields from joins
     agent_name: Optional[str] = None
     image_url: Optional[str] = None
+    is_tour_package: Optional[bool] = None
     suitability: Optional[str] = None
     image_gallery: List[str] = []
 
@@ -198,6 +199,7 @@ async def get_trips(
                 created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
                 agent_name=agent_name,
                 image_url=trip_data.get("image_url") or (images_map.get(trip_data["trip_id"], [None])[0]),
+                is_tour_package=trip_data.get("is_tour_package"),
                 suitability=trip_data.get("suitability"),
                 image_gallery=images_map.get(trip_data["trip_id"], []),
             )
@@ -256,6 +258,7 @@ async def get_my_trips(
                 available_seats=trip_data["available_seats"],
                 created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
                 image_url=trip_data.get("image_url") or (images_map.get(trip_data["trip_id"], [None])[0]),
+                is_tour_package=trip_data.get("is_tour_package"),
                 suitability=trip_data.get("suitability"),
                 image_gallery=images_map.get(trip_data["trip_id"], []),
             )
@@ -353,6 +356,7 @@ async def create_trip(
             available_seats=created_trip["available_seats"],
             created_at=datetime.fromisoformat(created_trip["created_at"].replace("Z", "+00:00")),
             image_url=created_trip.get("image_url") or (images_map.get(created_trip["trip_id"], [None])[0]),
+            is_tour_package=created_trip.get("is_tour_package"),
             suitability=created_trip.get("suitability"),
             image_gallery=images_map.get(created_trip["trip_id"], []),
         )
@@ -419,6 +423,7 @@ async def get_trip_by_id(
             created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
             agent_name=agent_name,
             image_url=trip_data.get("image_url") or (images_map.get(trip_id, [None])[0]),
+            is_tour_package=trip_data.get("is_tour_package"),
             suitability=trip_data.get("suitability"),
             image_gallery=images_map.get(trip_id, []),
         )
@@ -626,6 +631,7 @@ async def update_trip(
             created_at=datetime.fromisoformat(updated_trip["created_at"].replace("Z", "+00:00")),
             agent_name=agent_name,
             image_url=updated_trip.get("image_url") or (images_map.get(trip_id, [None])[0]),
+            is_tour_package=updated_trip.get("is_tour_package"),
             suitability=updated_trip.get("suitability"),
             image_gallery=images_map.get(trip_id, []),
         )

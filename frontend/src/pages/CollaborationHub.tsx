@@ -314,7 +314,7 @@ export default function CollaborationHub() {
         <Card className="glass-card border-0">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-heading">Matching</CardTitle>
-            <CardDescription>Same route / date trips you can pool</CardDescription>
+            <CardDescription>Same destination, within 30 days</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-heading">{matchingTrips?.length ?? 0}</p>
@@ -979,14 +979,17 @@ function PoolingRequestForm({
   const [selectedBusAgent, setSelectedBusAgent] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
-  // Filter matching trips
+  // Filter matching trips by destination city within 30 days
   const matchingMyTrips = myTrips.filter((trip) => {
-    if (trip.origin_city !== targetTrip.origin_city) return false;
-    if (trip.destination_city !== targetTrip.destination_city) return false;
-    if (trip.suitability !== targetTrip.suitability) return false;
-    const tripDate = trip.departure_time ? new Date(trip.departure_time).toDateString() : "";
-    const targetDate = targetTrip.departure_time ? new Date(targetTrip.departure_time).toDateString() : "";
-    if (tripDate !== targetDate) return false;
+    const myDest = (trip.destination_city || "").trim().toLowerCase();
+    const targetDest = (targetTrip.destination_city || "").trim().toLowerCase();
+    if (!myDest || myDest !== targetDest) return false;
+    if (!trip.departure_time || !targetTrip.departure_time) return false;
+    const myDate = new Date(trip.departure_time);
+    const targetDate = new Date(targetTrip.departure_time);
+    if (Number.isNaN(myDate.getTime()) || Number.isNaN(targetDate.getTime())) return false;
+    const dayDiff = Math.abs((myDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
+    if (dayDiff > 30) return false;
     return trip.available_seats > 0;
   });
 
@@ -1030,7 +1033,9 @@ function PoolingRequestForm({
           </SelectContent>
         </Select>
         {matchingMyTrips.length === 0 && (
-          <p className="text-sm text-destructive mt-1">No matching trips found. Make sure you have a trip with the same route, date, and suitability.</p>
+          <p className="text-sm text-destructive mt-1">
+            No matching trips found. You need a trip to the same destination departing within 30 days.
+          </p>
         )}
       </div>
 

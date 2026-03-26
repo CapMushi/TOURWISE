@@ -1,99 +1,75 @@
 # TourWise Backend API
 
-FastAPI backend for the TourWise travel platform.
+FastAPI backend for the TourWise platform with Supabase integration.
+
+## Current API Scope
+
+Implemented routers in `backend/app/api/`:
+
+- `health.py` - health endpoint
+- `auth.py` - agent registration/verification helpers and `/api/me`
+- `profile.py` - traveler profile read/update
+- `trips.py` - trips CRUD, trip image gallery, cover image sync
+- `bookings.py` - booking create/list/get/cancel, passengers, payments, notifications
+- `favorites.py` - wishlist/favorites
+- `collaboration.py` - agent collaboration, pooling requests, agent messages
+- `notification_preferences.py` - notification settings
+- `notifications.py` - booking notifications read APIs
+
+## Prerequisites
+
+- Python 3.11+
+- pip
 
 ## Setup
 
-### Prerequisites
-
-- Python 3.11 or higher
-- pip (Python package manager)
-
-### Installation
-
-1. **Create a virtual environment** (recommended):
+1. Create and activate a virtual environment:
 
 ```bash
 python -m venv venv
+venv\Scripts\activate
 ```
 
-2. **Activate the virtual environment**:
-
-   - On Windows:
-     ```bash
-     venv\Scripts\activate
-     ```
-   - On macOS/Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-
-3. **Install dependencies**:
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Set up environment variables**:
+3. Configure environment variables (`backend/.env`):
 
-   - Copy `.env.example` to `.env`:
-     ```bash
-     copy .env.example .env
-     ```
-   - Edit `.env` and add your Supabase credentials:
-     - `SUPABASE_URL`: Your Supabase project URL
-     - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
-     - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role key (keep this secret!)
-  - `SUPABASE_JWT_SECRET`: Your Supabase JWT secret (Project Settings → API)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_JWT_SECRET`
+- Optional: `BACKEND_HOST`, `BACKEND_PORT`
 
-## Running the Server
-
-Start the development server:
+## Run
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at:
-- **API**: http://localhost:8000
-- **Health Check**: http://localhost:8000/api/health
-- **API Docs**: http://localhost:8000/docs (Swagger UI)
-- **Alternative Docs**: http://localhost:8000/redoc
+Available endpoints:
 
-## Project Structure
+- API root: `http://localhost:8000/`
+- Health: `http://localhost:8000/api/health`
+- Swagger: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
-```
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI application entry point
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── health.py        # Health check endpoint
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py        # Configuration and settings
-│   └── services/
-│       ├── __init__.py
-│       └── supabase_client.py  # Supabase client setup
-├── .env.example             # Environment variables template
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
-```
+## Database Notes
 
-## Phase 1 Status
+- Canonical schema documentation: `.cursor/rules/database-schema.mdc`
+- API touch-point reference: `backend/supabase/schema_reference.sql`
+- Existing utility SQL scripts:
+  - `backend/supabase/add_trips_image_url.sql`
+  - `backend/supabase/storage_trip_images_bucket.sql`
+  - `backend/supabase/optional_profiles_trigger.sql`
 
-✅ FastAPI application structure
-✅ Environment configuration
-✅ Supabase client integration
-✅ Health check endpoint
+## Important Runtime Behavior
 
-## Next Steps (Phase 2+)
-
-- Authentication and authorization
-- User profiles and roles
-- Trips management
-- Bookings system
-- Agent verification
-- Notifications
+- Booking payment rows are currently inserted with `payments.currency = "PKR"`.
+- Booking totals are stored on booking creation and reused for cancellation/refund flow.
+- Trip cover image URL is stored in `trips.image_url`.
+- Additional gallery images are stored in `trip_images`.
 

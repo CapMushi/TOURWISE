@@ -1,9 +1,10 @@
-import { MapPin, Calendar, Users, Bus, Plane, Train, Car, Ship } from "lucide-react";
+import { MapPin, Calendar, Users, Bus, Plane, Train, Car, Ship, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { formatPkr } from "@/lib/currency";
 import type { TripResponse } from "@/lib/api";
+import { getTripResources } from "@/lib/tripResourcesStorage";
 
 interface TripCardFlexibleProps {
   trip: TripResponse;
@@ -46,6 +47,9 @@ export function TripCardFlexible({
   };
 
   const transportIcon = transportIcons[trip.transport_type.toLowerCase()] || <Bus className="h-4 w-4" />;
+  const resources = getTripResources(trip.trip_id);
+  const isTourPackage =
+    Boolean(trip.is_tour_package) || resources.buses.length > 0 || resources.hotels.length > 0;
 
   return (
     <div
@@ -68,6 +72,14 @@ export function TripCardFlexible({
         <div className="absolute top-3 right-3">
           {variant === "agent" && getStatusBadge()}
         </div>
+        {isTourPackage && (
+          <div className="absolute top-3 left-3">
+            <Badge className="bg-amber-500 text-white border-0">
+              <Star className="h-3 w-3 mr-1 fill-white" />
+              Tour Package
+            </Badge>
+          </div>
+        )}
         <div className="absolute bottom-3 left-3 right-3">
           <div className="flex items-center gap-2 text-white bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-full text-sm">
             {transportIcon}

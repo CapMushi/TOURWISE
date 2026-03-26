@@ -44,6 +44,7 @@ export interface TripResponse {
   created_at: string;
   agent_name?: string;
   image_url?: string;
+  is_tour_package?: boolean;
   suitability?: string;
   image_gallery?: string[];
 }
@@ -437,6 +438,49 @@ export async function getTopAgents(limit: number = 4): Promise<TopAgentsResponse
   });
 }
 
+// Traveler reviews for agents
+export interface ReviewAgentItem {
+  agent_id: number;
+  name: string;
+  email?: string | null;
+  rating?: number | null;
+  numberofreviews?: number | null;
+}
+
+export interface AgentReviewItem {
+  review_id: number;
+  agent_id: number;
+  user_id: string;
+  username?: string | null;
+  rating: number;
+  comment?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface UpsertAgentReviewRequest {
+  rating: number;
+  comment?: string;
+}
+
+export async function getReviewableAgents(): Promise<ReviewAgentItem[]> {
+  return apiClient<ReviewAgentItem[]>("/api/reviews/agents", { method: "GET" });
+}
+
+export async function getAgentReviews(agentId: number): Promise<AgentReviewItem[]> {
+  return apiClient<AgentReviewItem[]>(`/api/reviews/agents/${agentId}/reviews`, { method: "GET" });
+}
+
+export async function upsertAgentReview(
+  agentId: number,
+  payload: UpsertAgentReviewRequest
+): Promise<AgentReviewItem> {
+  return apiClient<AgentReviewItem>(`/api/reviews/agents/${agentId}/reviews`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 /**
  * Upload trip image to Supabase Storage
  */
@@ -504,6 +548,7 @@ export interface BookingResponse {
   booking_date: string;
   status: string;
   number_of_seats: number;
+  unit_price_at_booking?: number;
   total_price: number;
   passenger_names: string[];
   contact_email: string;
@@ -601,6 +646,7 @@ export interface TripWithAgent {
   available_seats: number;
   suitability?: string;
   image_url?: string;
+  is_tour_package?: boolean;
 }
 
 // Matching Trip

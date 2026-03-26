@@ -37,6 +37,7 @@ import CollaborationHub from "./pages/CollaborationHub";
 import TravelerNotifications from "./pages/TravelerNotifications";
 import EditProfile from "./pages/EditProfile";
 import ExploreTrips from "./pages/ExploreTrips";
+import AgentReviews from "./pages/AgentReviews";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
@@ -120,6 +121,16 @@ const App = () => (
                 <ProtectedRoute>
                   <AppLayout userRole="traveler">
                     <ExploreTrips />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent-reviews"
+              element={
+                <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <AgentReviews />
                   </AppLayout>
                 </ProtectedRoute>
               }
