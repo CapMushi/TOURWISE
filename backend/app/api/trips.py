@@ -6,6 +6,8 @@ from decimal import Decimal
 
 from app.core.security import get_current_user
 from app.services.supabase_client import get_supabase_client
+from app.integrations.base import CanonicalTripOffer
+from app.integrations.catalog import all_external_offers, get_external_offer_by_trip_id
 
 
 router = APIRouter()
@@ -60,6 +62,10 @@ class TripResponse(BaseModel):
     image_url: Optional[str] = None
     suitability: Optional[str] = None
     image_gallery: List[str] = []
+    # Service integration layer (local vs external)
+    source: str = "local"
+    provider_id: Optional[str] = None
+    external_ref: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -68,6 +74,79 @@ class TripResponse(BaseModel):
 class TripListResponse(BaseModel):
     trips: List[TripResponse]
     total: int
+
+
+def _canonical_offer_to_response(offer: CanonicalTripOffer) -> TripResponse:
+    created = offer.created_at or offer.departure_time
+    return TripResponse(
+        trip_id=offer.trip_id,
+        agent_id=offer.agent_id,
+        origin_city=offer.origin_city,
+        destination_province=offer.destination_province,
+        destination_city=offer.destination_city,
+        departure_time=offer.departure_time,
+        arrival_time=offer.arrival_time,
+        price=offer.price,
+        transport_type=offer.transport_type,
+        total_seats=offer.total_seats,
+        available_seats=offer.available_seats,
+        created_at=created,
+        agent_name=offer.agent_name,
+        image_url=offer.image_url,
+        suitability=offer.suitability,
+        image_gallery=list(offer.image_gallery),
+        source="external",
+        provider_id=offer.provider_id,
+        external_ref=offer.external_ref,
+    )
+
+
+def _external_offer_matches_filters(
+    offer: CanonicalTripOffer,
+    *,
+    has_filters: bool,
+    destination_province: Optional[str],
+    destination_city: Optional[str],
+    origin_city: Optional[str],
+    transport_type: Optional[str],
+    price_min: Optional[float],
+    price_max: Optional[float],
+    departure_date_from: Optional[datetime],
+    departure_date_to: Optional[datetime],
+    min_available_seats: Optional[int],
+    suitability: Optional[str],
+) -> bool:
+    if has_filters and offer.available_seats <= 0:
+        return False
+    if destination_province and destination_province.strip():
+        dp = (offer.destination_province or "").lower()
+        if destination_province.strip().lower() not in dp:
+            return False
+    if destination_city and destination_city.strip():
+        dc = offer.destination_city.lower()
+        if destination_city.strip().lower() not in dc:
+            return False
+    if origin_city and origin_city.strip():
+        oc = offer.origin_city.lower()
+        if origin_city.strip().lower() not in oc:
+            return False
+    if transport_type and transport_type.lower() != "any":
+        if offer.transport_type.lower() != transport_type.lower():
+            return False
+    if price_min is not None and float(offer.price) < price_min:
+        return False
+    if price_max is not None and float(offer.price) > price_max:
+        return False
+    if departure_date_from and offer.departure_time < departure_date_from:
+        return False
+    if departure_date_to and offer.departure_time > departure_date_to:
+        return False
+    if min_available_seats is not None and offer.available_seats < min_available_seats:
+        return False
+    if suitability and suitability.strip() and suitability.lower() != "any":
+        if (offer.suitability or "") != suitability:
+            return False
+    return True
 
 
 def _fetch_trip_images_map(supabase, trip_ids: List[int]) -> dict[int, List[str]]:
@@ -202,7 +281,27 @@ async def get_trips(
                 image_gallery=images_map.get(trip_data["trip_id"], []),
             )
             trips.append(trip)
-        
+
+        external_trips: List[TripResponse] = []
+        for offer in all_external_offers():
+            if _external_offer_matches_filters(
+                offer,
+                has_filters=has_filters,
+                destination_province=destination_province,
+                destination_city=destination_city,
+                origin_city=origin_city,
+                transport_type=transport_type,
+                price_min=price_min,
+                price_max=price_max,
+                departure_date_from=departure_date_from,
+                departure_date_to=departure_date_to,
+                min_available_seats=min_available_seats,
+                suitability=suitability,
+            ):
+                external_trips.append(_canonical_offer_to_response(offer))
+        external_trips.sort(key=lambda t: (t.departure_time, t.trip_id))
+        trips.extend(external_trips)
+
         return TripListResponse(trips=trips, total=len(trips))
     
     except Exception as e:
@@ -373,7 +472,17 @@ async def get_trip_by_id(
     """
     Get a single trip by trip_id.
     Includes agent information.
+    Negative trip_id: external (integration layer) synthetic id.
     """
+    if trip_id < 0:
+        ext = get_external_offer_by_trip_id(trip_id)
+        if not ext:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Trip with ID {trip_id} not found",
+            )
+        return _canonical_offer_to_response(ext)
+
     supabase = get_supabase_client()
     
     try:

@@ -11,6 +11,7 @@
 --   add_trips_image_url.sql      — trips.image_url
 --   storage_trip_images_bucket.sql — Storage bucket for uploads
 --   optional_profiles_trigger.sql — optional profile bootstrap
+--   external_integrations_phase1.sql — external SIL tables (bookings, passengers, payments, snapshots)
 -- =============================================================================
 
 
@@ -108,6 +109,50 @@
 -- notification_type, title, message
 -- is_read                 — insert false; update true when marking read
 -- created_at
+
+
+-- -----------------------------------------------------------------------------
+-- external_trip_snapshots  (Phase 2 integrations — optional ingest)
+-- -----------------------------------------------------------------------------
+-- snapshot_id (bigint, PK, identity)
+-- provider_id, external_ref
+-- origin_city, destination_province, destination_city
+-- departure_time, arrival_time (timestamptz)
+-- price (numeric), transport_type, total_seats, available_seats, suitability, image_url
+-- raw_snapshot (jsonb), created_at
+
+
+-- -----------------------------------------------------------------------------
+-- external_bookings  (Phase 2 bookings.py — external branch + merged list)
+-- -----------------------------------------------------------------------------
+-- external_booking_id (bigint, PK, identity)
+-- user_id (uuid, FK → profiles.id)
+-- provider_id, external_ref, synthetic_trip_id (bigint, null)
+-- booking_date, status, number_of_seats, total_price
+-- passenger_names (text[]), contact_email, contact_phone, special_requests
+-- booking_reference (unique), provider_confirmation_ref, confirmed_at
+-- cancelled_at, cancellation_reason, refund_amount
+-- provider_response (jsonb), created_at, updated_at
+
+
+-- -----------------------------------------------------------------------------
+-- external_booking_passengers  (Phase 2 bookings.py)
+-- -----------------------------------------------------------------------------
+-- passenger_id (bigint, PK, identity)
+-- external_booking_id (bigint, FK → external_bookings, on delete cascade)
+-- full_name, age, gender, passport_number
+-- emergency_contact_name, emergency_contact_phone
+-- dietary_restrictions, medical_conditions, created_at
+
+
+-- -----------------------------------------------------------------------------
+-- external_payments  (Phase 2 bookings.py)
+-- -----------------------------------------------------------------------------
+-- payment_id (bigint, PK, identity)
+-- external_booking_id (bigint, FK → external_bookings, on delete cascade)
+-- amount, currency, payment_method, payment_status
+-- transaction_id (unique when not null), payment_date
+-- refunded_at, refund_amount, payment_details (jsonb), created_at, updated_at
 
 
 -- -----------------------------------------------------------------------------

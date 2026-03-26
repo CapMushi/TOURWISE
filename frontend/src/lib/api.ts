@@ -46,6 +46,10 @@ export interface TripResponse {
   image_url?: string;
   suitability?: string;
   image_gallery?: string[];
+  /** local = Supabase trips; external = integration layer (synthetic trip_id) */
+  source?: "local" | "external";
+  provider_id?: string | null;
+  external_ref?: string | null;
 }
 
 // API Error Response
@@ -524,6 +528,8 @@ export interface BookingResponse {
     price: number;
   };
   agent_name?: string;
+  /** local = public.booking; external = public.external_bookings */
+  booking_source?: "local" | "external";
 }
 
 /**

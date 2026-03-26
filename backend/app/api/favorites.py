@@ -71,6 +71,9 @@ async def get_favorite_status(
 ):
     user_id = current_user["id"]
 
+    if trip_id < 0:
+        return FavoriteStatusResponse(trip_id=trip_id, is_favorited=False)
+
     try:
         result = (
             supabase.table("favorites")
@@ -95,6 +98,12 @@ async def add_favorite(
     supabase=Depends(get_supabase_client),
 ):
     user_id = current_user["id"]
+
+    if trip_id < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Wishlist is not available for external partner trips",
+        )
 
     try:
         # Validate trip exists
@@ -131,6 +140,9 @@ async def remove_favorite(
     supabase=Depends(get_supabase_client),
 ):
     user_id = current_user["id"]
+
+    if trip_id < 0:
+        return FavoriteStatusResponse(trip_id=trip_id, is_favorited=False)
 
     try:
         (
