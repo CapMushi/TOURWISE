@@ -1,0 +1,104 @@
+---
+description: Supabase RAG chatbot strategy using Gemini embeddings and generation without Pinecone
+alwaysApply: false
+---
+
+# Supabase RAG Chatbot Strategy
+
+## Goal
+- Replace static frontend chatbot replies with backend-grounded answers.
+- Use Supabase (Postgres + pgvector) as the retrieval store instead of Pinecone.
+- Keep chat features additive and avoid breaking existing trip/booking/integration workflows.
+
+## Core Architecture
+- Indexing pipeline:
+  - Collect source content (FAQ, policies, trip guidance, help docs).
+  - Chunk text into retrieval-friendly segments.
+  - Generate embeddings for each chunk with Gemini embedding model.
+  - Store chunks + vectors + metadata in Supabase tables.
+- Query pipeline:
+  - Embed user query.
+  - Retrieve top-k relevant chunks via pgvector similarity search.
+  - Send query + retrieved context to Gemini generation model.
+  - Return concise grounded answer with source references.
+
+## Model Strategy
+- Use one Gemini key for both:
+  - embeddings (e.g. `gemini-embedding-001`)
+  - generation (e.g. `gemini-2.5-flash`)
+- Keep API keys backend-only and never expose to frontend.
+
+## Data and Schema Guidance
+- Keep original source data in existing tables/files; do not mutate source rows for RAG.
+- Add dedicated knowledge base tables for RAG index (documents/chunks/embeddings/metadata).
+- Store enough metadata for source traceability (document id, section, tags, updated_at).
+
+## API and Service Boundaries
+- Backend should own all RAG logic (ingest, retrieve, answer).
+- Frontend chatbot should call backend chat endpoint only.
+- Enforce strict response shape and include fallback behavior on model/retrieval failures.
+
+## Reliability and Safety
+- Apply timeout, top-k bounds, and max context limits.
+- Validate model output and prevent unsupported fields.
+- Add deterministic fallback response when retrieval/model fails.
+- Log retrieval/model errors for debugging without leaking secrets.
+
+## Demo Expectations
+- Chatbot responses are no longer static placeholders.
+- Answers are grounded in retrieved Supabase context.
+- Responses show better relevance and optional source citations.
+
+## Implementation Status
+- [x] DB schema: `kb_documents`, `kb_chunks`, `match_kb_chunks` RPC — created via `chatbot_rag_phase1.sql`.
+- [x] Backend service: `chat_rag.py` — `answer_with_rag`, `ingest_document`, `_embed_text`, `_retrieve_context`, `_generate_answer`.
+- [x] API endpoints: `POST /api/chat/query`, `POST /api/chat/ingest`.
+- [x] Frontend: `ChatBot.tsx` calls backend `/api/chat/query`.
+- [x] Knowledge base populated — 5 documents ingested via `backend/scripts/seed_kb.py`.
+- [x] Live user-specific DB context wired — `_is_personal_query()` detects intent, `_fetch_user_live_context()` fetches bookings + profile, injected alongside RAG chunks.
+
+## Pending Work
+
+### Priority 1 — Populate knowledge base (one-time ingestion script)
+- Write `backend/scripts/seed_kb.py` to ingest static platform content.
+- Documents to ingest: booking FAQ, cancellation policy, external partner trips FAQ, platform guide.
+- Script uses `ingest_document()` service directly (no HTTP) to avoid auth complexity.
+- Run once: `python backend/scripts/seed_kb.py`.
+- Re-run whenever content changes (upsert-safe, replaces old chunks automatically).
+
+### Priority 2 — Live user-specific context in `/api/chat/query` ✅ DONE
+- `_is_personal_query(message)` checks ~30 personal-intent keywords.
+- `_fetch_user_live_context(supabase, user_id)` fetches profile, local bookings (with trip details), and external bookings.
+- Live context injected alongside RAG chunks with a two-section prompt to Gemini.
+- Response now includes `used_live_context: bool` flag for observability.
+- All fetches wrapped in try/except — never blocks the response if DB fetch fails.
+
+## Ingestion Script Plan (seed_kb.py)
+
+### Location
+`backend/scripts/seed_kb.py`
+
+### How it works
+1. Import `ingest_document` from `app.services.chat_rag` directly (bypasses HTTP/auth).
+2. Import `get_supabase_client` or create a Supabase client using service role key.
+3. Define a list of documents as Python dicts: `source_key`, `title`, `category`, `content`.
+4. Loop through documents and call `ingest_document(...)` for each.
+5. Print chunk count per document as confirmation.
+
+### Documents to seed (minimum for demo)
+| source_key | title | category |
+|---|---|---|
+| `tw-faq-bookings` | TourWise Booking FAQ | faq |
+| `tw-faq-external` | External Partner Trips FAQ | faq |
+| `tw-policy-cancellation` | Cancellation & Refund Policy | policy |
+| `tw-guide-platform` | Platform Overview & How To Use | guide |
+
+### Environment
+- Script reads `.env` from `backend/` (same as main app).
+- Requires `GOOGLE_API_KEY` / `GEMINI_API_KEY` and `SUPABASE_*` vars to be set.
+- Run from workspace root: `python backend/scripts/seed_kb.py`
+
+### Safety
+- `ingest_document` uses upsert on `source_key` — safe to re-run without duplicates.
+- Old chunks for a document are deleted and replaced on each run.
+- Script is idempotent.

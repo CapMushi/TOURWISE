@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
     GEMINI_TIMEOUT_SECONDS: int = 8
     
     model_config = SettingsConfigDict(
