@@ -84,6 +84,24 @@ export interface RecommendationsResponse {
   summary?: string | null;
 }
 
+export interface ChatQueryRequest {
+  message: string;
+  category?: string;
+}
+
+export interface ChatSource {
+  document_id?: number;
+  title?: string;
+  source_key?: string;
+  similarity?: number;
+}
+
+export interface ChatQueryResponse {
+  answer: string;
+  sources: ChatSource[];
+  used_context_count: number;
+}
+
 // Search filters for trips
 export interface TripSearchFilters {
   destination_province?: string;
@@ -261,6 +279,16 @@ export async function getRecommendations(limit: number = 4, userQuery?: string):
   }
   return apiClient<RecommendationsResponse>(`/api/recommendations?${params.toString()}`, {
     method: "GET",
+  });
+}
+
+export async function queryChatbot(
+  data: ChatQueryRequest,
+  topK: number = 5
+): Promise<ChatQueryResponse> {
+  return apiClient<ChatQueryResponse>(`/api/chat/query?top_k=${topK}`, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
 }
 

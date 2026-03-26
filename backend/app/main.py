@@ -13,6 +13,7 @@ from app.api import (
     integrations,
     recommendations,
     reviews,
+    chat,
 )
 
 app = FastAPI(
@@ -56,6 +57,7 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(reviews.router, prefix="/api/reviews", tags=["reviews"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 
 @app.get("/")
