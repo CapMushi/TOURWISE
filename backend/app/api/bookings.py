@@ -236,7 +236,7 @@ def _local_booking_row_to_response(booking: dict, supabase) -> BookingResponse:
     )
 
 
-async def _create_external_booking(
+def _create_external_booking(
     booking_data: CreateBookingRequest,
     user_id: str,
     supabase,
@@ -422,7 +422,7 @@ def _cancel_external_booking(
 
 
 @router.post("/", response_model=BookingResponse, status_code=status.HTTP_201_CREATED)
-async def create_booking(
+def create_booking(
     booking_data: CreateBookingRequest,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -436,7 +436,7 @@ async def create_booking(
 
     if booking_data.trip_id < 0:
         try:
-            return await _create_external_booking(booking_data, user_id, supabase)
+            return _create_external_booking(booking_data, user_id, supabase)
         except HTTPException:
             raise
         except Exception as e:
@@ -615,7 +615,7 @@ async def create_booking(
 
 
 @router.get("/", response_model=BookingListResponse)
-async def get_my_bookings(
+def get_my_bookings(
     status_filter: Optional[str] = Query(None, description="Filter by booking status"),
     page: Optional[int] = Query(None, ge=1, description="Page number for paginated results"),
     page_size: Optional[int] = Query(None, ge=1, le=24, description="Page size for paginated results"),
@@ -697,7 +697,7 @@ async def get_my_bookings(
 
 
 @router.get("/{booking_id}", response_model=BookingResponse)
-async def get_booking_by_id(
+def get_booking_by_id(
     booking_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -783,7 +783,7 @@ async def get_booking_by_id(
 
 
 @router.post("/{booking_id}/cancel", response_model=BookingResponse)
-async def cancel_booking(
+def cancel_booking(
     booking_id: int,
     cancellation_reason: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
@@ -941,7 +941,7 @@ class TripWithPassengers(BaseModel):
 
 
 @router.get("/agent/passengers", response_model=List[TripWithPassengers])
-async def get_agent_trip_passengers(
+def get_agent_trip_passengers(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -1053,3 +1053,4 @@ async def get_agent_trip_passengers(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching agent passengers: {str(e)}",
         )
+

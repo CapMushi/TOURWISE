@@ -137,7 +137,7 @@ def _get_trip_counts_by_agent(supabase, agent_ids: list[int]) -> dict[int, int]:
 
 
 @router.get("/dashboard", response_model=AdminDashboardResponse)
-async def get_admin_dashboard(
+def get_admin_dashboard(
     _: dict = Depends(require_admin_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -237,7 +237,7 @@ async def get_admin_dashboard(
 
 
 @router.get("/agents", response_model=AdminAgentDirectoryResponse)
-async def get_admin_agents(
+def get_admin_agents(
     _: dict = Depends(require_admin_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -269,7 +269,7 @@ async def get_admin_agents(
 
 
 @router.patch("/agents/{agent_id}/verification", response_model=AgentVerificationDecisionResponse)
-async def review_agent_verification(
+def review_agent_verification(
     agent_id: int,
     body: AgentVerificationDecisionRequest,
     _: dict = Depends(require_admin_user),
@@ -305,3 +305,4 @@ async def review_agent_verification(
         agent_id=agent_id,
         verification_status=body.decision,
     )
+

@@ -22,7 +22,7 @@ class FavoriteStatusResponse(BaseModel):
 
 
 @router.get("", response_model=List[FavoriteTripItem])
-async def get_my_favorites(
+def get_my_favorites(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -64,7 +64,7 @@ async def get_my_favorites(
 
 
 @router.get("/{trip_id}/status", response_model=FavoriteStatusResponse)
-async def get_favorite_status(
+def get_favorite_status(
     trip_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -92,7 +92,7 @@ async def get_favorite_status(
 
 
 @router.post("/{trip_id}", response_model=FavoriteStatusResponse, status_code=status.HTTP_201_CREATED)
-async def add_favorite(
+def add_favorite(
     trip_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -134,7 +134,7 @@ async def add_favorite(
 
 
 @router.delete("/{trip_id}", response_model=FavoriteStatusResponse)
-async def remove_favorite(
+def remove_favorite(
     trip_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -158,3 +158,4 @@ async def remove_favorite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error removing favorite: {str(e)}",
         )
+

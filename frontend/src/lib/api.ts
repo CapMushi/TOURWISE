@@ -415,6 +415,55 @@ export async function queryChatbot(
   });
 }
 
+export type ChatStreamEvent =
+  | { text: string }
+  | { done: true; sources: ChatSource[]; used_context_count: number; used_live_context: boolean }
+  | { error: string };
+
+export async function* streamChatbot(
+  message: string,
+  topK: number = 5
+): AsyncGenerator<ChatStreamEvent> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
+
+  const url = `${API_BASE_URL}/api/chat/query/stream?top_k=${topK}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ message }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Chat stream error: ${response.status}`);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr) continue;
+      try {
+        yield JSON.parse(jsonStr) as ChatStreamEvent;
+      } catch {
+        // ignore malformed chunks
+      }
+    }
+  }
+}
+
 /**
  * Get trips for the authenticated agent
  */

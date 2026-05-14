@@ -19,7 +19,7 @@ class RecommendationsResponse(BaseModel):
 
 
 @router.get("", response_model=RecommendationsResponse, status_code=status.HTTP_200_OK)
-async def get_recommendations(
+def get_recommendations(
     limit: int = Query(4, ge=1, le=20),
     user_query: str | None = Query(None, description="Optional natural-language recommendation intent"),
     current_user: dict = Depends(get_current_user),
@@ -33,3 +33,4 @@ async def get_recommendations(
         user_query=user_query,
     )
     return RecommendationsResponse(**result)
+

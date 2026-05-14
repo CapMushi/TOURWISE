@@ -43,7 +43,7 @@ class NotificationPreferencesUpdate(BaseModel):
 
 
 @router.get("", response_model=NotificationPreferencesResponse)
-async def get_notification_preferences(
+def get_notification_preferences(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -83,7 +83,7 @@ async def get_notification_preferences(
 
 
 @router.patch("", response_model=NotificationPreferencesResponse)
-async def update_notification_preferences(
+def update_notification_preferences(
     payload: NotificationPreferencesUpdate,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -126,3 +126,4 @@ async def update_notification_preferences(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating notification preferences: {str(e)}",
         )
+

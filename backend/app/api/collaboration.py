@@ -167,7 +167,7 @@ def compute_match_score(trip1: dict, trip2: dict) -> Optional[float]:
 
 
 @router.get("/agents", response_model=List[AgentInfo])
-async def get_other_agents(
+def get_other_agents(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -210,7 +210,7 @@ async def get_other_agents(
 
 
 @router.get("/trips", response_model=List[TripWithAgent])
-async def get_other_agents_trips(
+def get_other_agents_trips(
     destination_city: Optional[str] = Query(None, description="Filter by destination city"),
     origin_city: Optional[str] = Query(None, description="Filter by origin city"),
     departure_date: Optional[str] = Query(None, description="Filter by departure date (YYYY-MM-DD)"),
@@ -297,7 +297,7 @@ async def get_other_agents_trips(
 
 
 @router.get("/matching-trips", response_model=List[MatchingTrip])
-async def get_matching_trips(
+def get_matching_trips(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -398,7 +398,7 @@ async def get_matching_trips(
 
 
 @router.post("/bus-pooling/request", response_model=BusPoolingRequestResponse, status_code=status.HTTP_201_CREATED)
-async def create_bus_pooling_request(
+def create_bus_pooling_request(
     request_data: BusPoolingRequestCreate,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -569,7 +569,7 @@ async def create_bus_pooling_request(
 
 
 @router.get("/bus-pooling/requests", response_model=List[BusPoolingRequestResponse])
-async def get_bus_pooling_requests(
+def get_bus_pooling_requests(
     type: str = Query("all", description="Filter: 'sent', 'received', or 'all'"),
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -679,7 +679,7 @@ async def get_bus_pooling_requests(
 
 
 @router.patch("/bus-pooling/requests/{request_id}", response_model=BusPoolingRequestResponse)
-async def update_bus_pooling_request(
+def update_bus_pooling_request(
     request_id: int,
     update_data: BusPoolingRequestUpdate,
     current_user: dict = Depends(get_current_user),
@@ -838,7 +838,7 @@ async def update_bus_pooling_request(
 
 
 @router.get("/messages", response_model=List[AgentMessageResponse])
-async def get_messages(
+def get_messages(
     agent_id: Optional[int] = Query(None, description="Filter by specific agent (conversation)"),
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -915,7 +915,7 @@ async def get_messages(
 
 
 @router.post("/messages", response_model=AgentMessageResponse, status_code=status.HTTP_201_CREATED)
-async def create_message(
+def create_message(
     message_data: AgentMessageCreate,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -997,7 +997,7 @@ async def create_message(
 
 
 @router.get("/messages/unread-count")
-async def get_unread_message_count(
+def get_unread_message_count(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -1033,7 +1033,7 @@ async def get_unread_message_count(
 
 
 @router.patch("/messages/read", status_code=status.HTTP_204_NO_CONTENT)
-async def mark_conversation_messages_read(
+def mark_conversation_messages_read(
     other_agent_id: int = Query(..., description="Mark messages from this agent as read"),
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -1068,7 +1068,7 @@ class AgentNotificationFeedItem(BaseModel):
 
 
 @router.get("/agent-notification-feed", response_model=List[AgentNotificationFeedItem])
-async def get_agent_notification_feed(
+def get_agent_notification_feed(
     limit: int = Query(30, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -1200,4 +1200,5 @@ async def get_agent_notification_feed(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error building notification feed: {str(e)}",
         )
+
 

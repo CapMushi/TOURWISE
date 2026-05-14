@@ -55,7 +55,7 @@ class UpsertTripReviewRequest(BaseModel):
 
 
 @router.get("/agents", response_model=List[AgentReviewableItem])
-async def list_agents_for_reviews(
+def list_agents_for_reviews(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -77,7 +77,7 @@ async def list_agents_for_reviews(
 
 
 @router.get("/agents/{agent_id}/trips")
-async def get_agent_public_trips(
+def get_agent_public_trips(
     agent_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -108,7 +108,7 @@ async def get_agent_public_trips(
 
 
 @router.get("/agents/{agent_id}/my-review")
-async def get_my_review_for_agent(
+def get_my_review_for_agent(
     agent_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -143,7 +143,7 @@ async def get_my_review_for_agent(
 
 
 @router.get("/agents/{agent_id}/reviews", response_model=List[AgentReview])
-async def list_reviews_for_agent(
+def list_reviews_for_agent(
     agent_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -205,7 +205,7 @@ async def list_reviews_for_agent(
 
 
 @router.post("/agents/{agent_id}/reviews", response_model=AgentReview)
-async def upsert_agent_review(
+def upsert_agent_review(
     agent_id: int,
     payload: UpsertAgentReviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -300,7 +300,7 @@ async def upsert_agent_review(
 
 
 @router.get("/trips/{trip_id}/my-review")
-async def get_my_review_for_trip(
+def get_my_review_for_trip(
     trip_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -340,7 +340,7 @@ async def get_my_review_for_trip(
 
 
 @router.get("/trips/{trip_id}/reviews", response_model=List[TripReview])
-async def list_reviews_for_trip(
+def list_reviews_for_trip(
     trip_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -399,7 +399,7 @@ async def list_reviews_for_trip(
 
 
 @router.post("/trips/{trip_id}/reviews", response_model=TripReview)
-async def upsert_trip_review(
+def upsert_trip_review(
     trip_id: int,
     payload: UpsertTripReviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -513,3 +513,4 @@ async def upsert_trip_review(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error saving trip review: {message}",
         )
+

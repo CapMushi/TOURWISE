@@ -1,10 +1,12 @@
+import json as json_lib
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.security import get_current_user
-from app.services.chat_rag import answer_with_rag, ingest_document
+from app.services.chat_rag import answer_with_rag, ingest_document, stream_answer_with_rag
 from app.services.supabase_client import get_supabase_client
 
 router = APIRouter()
@@ -44,7 +46,7 @@ class ChatIngestResponse(BaseModel):
 
 
 @router.post("/query", response_model=ChatQueryResponse, status_code=status.HTTP_200_OK)
-async def query_chatbot(
+def query_chatbot(
     payload: ChatQueryRequest,
     top_k: int = Query(5, ge=1, le=10),
     current_user: dict = Depends(get_current_user),
@@ -67,8 +69,40 @@ async def query_chatbot(
         ) from exc
 
 
+@router.post("/query/stream")
+def stream_chatbot(
+    payload: ChatQueryRequest,
+    top_k: int = Query(5, ge=1, le=10),
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    user_id = current_user["id"]
+
+    def generate():
+        try:
+            for event in stream_answer_with_rag(
+                user_message=payload.message,
+                supabase=supabase,
+                top_k=top_k,
+                category=payload.category,
+                user_id=user_id,
+            ):
+                yield f"data: {json_lib.dumps(event)}\n\n"
+        except Exception as exc:
+            yield f"data: {json_lib.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/ingest", response_model=ChatIngestResponse, status_code=status.HTTP_201_CREATED)
-async def ingest_chat_knowledge(
+def ingest_chat_knowledge(
     payload: ChatIngestRequest,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -89,3 +123,4 @@ async def ingest_chat_knowledge(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Chatbot ingest error: {exc}",
         ) from exc
+

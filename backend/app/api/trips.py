@@ -205,7 +205,7 @@ def _fetch_trip_images_map(supabase, trip_ids: List[int]) -> dict[int, List[str]
 
 
 @router.get("", response_model=TripListResponse)
-async def get_trips(
+def get_trips(
     destination_province: Optional[str] = Query(None, description="Filter by destination province"),
     destination_city: Optional[str] = Query(None, description="Filter by destination city"),
     origin_city: Optional[str] = Query(None, description="Filter by origin city"),
@@ -402,7 +402,7 @@ async def get_trips(
 
 
 @router.get("/my-trips", response_model=TripListResponse)
-async def get_my_trips(
+def get_my_trips(
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -461,7 +461,7 @@ async def get_my_trips(
 
 
 @router.post("", response_model=TripResponse, status_code=status.HTTP_201_CREATED)
-async def create_trip(
+def create_trip(
     trip_data: CreateTripRequest,
     current_user: dict = Depends(get_current_user),
 ):
@@ -557,7 +557,7 @@ async def create_trip(
 
 
 @router.get("/{trip_id}", response_model=TripResponse)
-async def get_trip_by_id(
+def get_trip_by_id(
     trip_id: int,
 ):
     """
@@ -656,7 +656,7 @@ class TripImageResponse(BaseModel):
 
 
 @router.get("/{trip_id}/images", response_model=List[TripImageResponse])
-async def get_trip_images(trip_id: int):
+def get_trip_images(trip_id: int):
     supabase = get_supabase_client()
 
     try:
@@ -683,7 +683,7 @@ async def get_trip_images(trip_id: int):
 
 
 @router.post("/{trip_id}/images", response_model=TripImageResponse, status_code=status.HTTP_201_CREATED)
-async def create_trip_image(
+def create_trip_image(
     trip_id: int,
     payload: TripImageCreateRequest,
     current_user: dict = Depends(get_current_user),
@@ -741,7 +741,7 @@ async def create_trip_image(
 
 
 @router.patch("/{trip_id}", response_model=TripResponse)
-async def update_trip(
+def update_trip(
     trip_id: int,
     update_data: UpdateTripRequest,
     current_user: dict = Depends(get_current_user),
@@ -840,4 +840,5 @@ async def update_trip(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update trip: {str(e)}",
         )
+
 

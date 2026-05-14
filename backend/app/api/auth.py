@@ -20,7 +20,7 @@ class RegisterAsAgentResponse(BaseModel):
 
 
 @router.post("/register-as-agent", response_model=RegisterAsAgentResponse)
-async def register_as_agent(current_user: dict = Depends(get_current_user)):
+def register_as_agent(current_user: dict = Depends(get_current_user)):
     """
     Register the current user as a travel agent.
     Creates travel_agent record with pending verification status.
@@ -68,7 +68,7 @@ async def register_as_agent(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/skip-verification", response_model=SkipVerificationResponse)
-async def skip_verification(current_user: dict = Depends(get_current_user)):
+def skip_verification(current_user: dict = Depends(get_current_user)):
     """
     Legacy testing endpoint kept disabled for safety.
     """
@@ -79,7 +79,7 @@ async def skip_verification(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/me")
-async def read_me(current_user=Depends(get_current_user)):
+def read_me(current_user=Depends(get_current_user)):
   """
   Return information about the currently authenticated user based on the Supabase JWT.
   """
@@ -103,7 +103,7 @@ class TopAgentsResponse(BaseModel):
 
 
 @router.get("/top-agents", response_model=TopAgentsResponse)
-async def get_top_agents(limit: int = Query(4, ge=1, le=20, description="Number of agents to return")):
+def get_top_agents(limit: int = Query(4, ge=1, le=20, description="Number of agents to return")):
     """
     Get top rated travel agents ordered by rating.
     Returns agents with highest ratings and most reviews.
@@ -139,5 +139,6 @@ async def get_top_agents(limit: int = Query(4, ge=1, le=20, description="Number 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch top agents: {str(e)}",
         )
+
 
 

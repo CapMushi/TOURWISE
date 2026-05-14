@@ -33,7 +33,7 @@ class BookingNotificationListResponse(BaseModel):
 
 
 @router.get("", response_model=BookingNotificationListResponse)
-async def list_my_notifications(
+def list_my_notifications(
     page: Optional[int] = Query(None, ge=1, description="Page number for paginated results"),
     page_size: Optional[int] = Query(None, ge=1, le=50, description="Page size for paginated results"),
     current_user: dict = Depends(get_current_user),
@@ -107,7 +107,7 @@ async def list_my_notifications(
 
 
 @router.patch("/{notification_id}/read", response_model=BookingNotificationResponse)
-async def mark_notification_read(
+def mark_notification_read(
     notification_id: int,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -154,7 +154,7 @@ async def mark_notification_read(
 
 
 @router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
-async def mark_all_notifications_read(
+def mark_all_notifications_read(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -166,3 +166,4 @@ async def mark_all_notifications_read(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error marking notifications read: {str(e)}",
         )
+

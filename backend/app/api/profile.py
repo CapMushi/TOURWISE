@@ -42,7 +42,7 @@ def _ensure_profile_row(supabase, user_id: str) -> dict:
 
 
 @router.get("", response_model=ProfileResponse)
-async def get_profile(
+def get_profile(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -69,7 +69,7 @@ async def get_profile(
 
 
 @router.patch("", response_model=ProfileResponse)
-async def update_profile(
+def update_profile(
     body: ProfileUpdateRequest,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -179,7 +179,7 @@ class AgentDashboardResponse(BaseModel):
 
 
 @router.get("/agent", response_model=AgentProfileResponse)
-async def get_agent_profile(
+def get_agent_profile(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -222,7 +222,7 @@ async def get_agent_profile(
 
 
 @router.get("/agent/dashboard", response_model=AgentDashboardResponse)
-async def get_agent_dashboard(
+def get_agent_dashboard(
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -352,7 +352,7 @@ async def get_agent_dashboard(
 
 
 @router.patch("/agent", response_model=AgentProfileResponse)
-async def update_agent_profile(
+def update_agent_profile(
     body: AgentProfileUpdateRequest,
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
@@ -382,7 +382,7 @@ async def update_agent_profile(
             payload["profile_details"] = body.profile_details
 
         if not payload:
-            return await get_agent_profile(current_user=current_user, supabase=supabase)
+            return get_agent_profile(current_user=current_user, supabase=supabase)
 
         res = (
             supabase.table("travel_agent")
@@ -416,3 +416,4 @@ async def update_agent_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating agent profile: {str(e)}",
         )
+
