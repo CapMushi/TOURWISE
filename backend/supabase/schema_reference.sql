@@ -15,17 +15,26 @@
 --   optional_profiles_trigger.sql — optional profile bootstrap
 --   external_integrations_phase1.sql — external SIL tables (bookings, passengers, payments, snapshots)
 --   trip_reviews_phase1.sql — traveler reviews for booked trips
+--   agent_verification_v2_phase1.sql — travel_agent business_name/phone/cnic_number/submitted_at + indexes
+--   storage_agent_documents_bucket.sql — private bucket for agent KYC documents
+--   manage_users_bans_phase1.sql — profile-level ban columns + banned_cnics table
 -- =============================================================================
 
 
 -- -----------------------------------------------------------------------------
--- profiles  (profile.py, trip_images.created_by on insert in trips.py)
+-- profiles  (profile.py, trip_images.created_by on insert in trips.py, admin.py bans)
 -- -----------------------------------------------------------------------------
 -- id (uuid, PK)           — select, insert minimal { id }; update never from code
 -- username                — select, update
 -- preferences (jsonb)     — select, update
 -- profile_details (jsonb) — select, update (e.g. avatar_url)
 -- updated_at              — select (DB may maintain)
+-- banned_until (timestamptz, null) — read by security.py at every JWT check;
+--                                    set by admin.py ban handlers; NULL = active,
+--                                    'infinity' = permanent, future ts = time-bounded
+-- ban_reason (text, null)          — set on ban, cleared on unban
+-- banned_at (timestamptz, null)    — set on ban, cleared on unban
+-- banned_by (uuid, FK → profiles.id, null) — admin who issued the ban
 
 
 -- -----------------------------------------------------------------------------
@@ -49,6 +58,18 @@
 -- user_admin_roles.user_id (uuid, FK → profiles.id)
 -- user_admin_roles.role_id (FK → admin_roles.role_id)
 -- user_admin_roles.assigned_by, assigned_at
+
+
+-- -----------------------------------------------------------------------------
+-- banned_cnics  (admin.py ban handlers, auth.py register_as_agent check)
+-- -----------------------------------------------------------------------------
+-- cnic_number (text, PK)           — normalized CNIC blocked from agent registration
+-- reason (text, NOT NULL)          — required reason, surfaced when registration is refused
+-- banned_at (timestamptz, default now()) — when the ban was issued
+-- banned_by (uuid, FK → profiles.id, null) — admin who issued the ban
+-- lifted_at (timestamptz, null)    — set on unban; NULL = currently active
+-- lifted_by (uuid, FK → profiles.id, null) — admin who lifted the ban
+-- Active row check uses partial index: cnic_number where lifted_at is null
 
 
 -- -----------------------------------------------------------------------------

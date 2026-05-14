@@ -105,10 +105,18 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `preferences` (jsonb) - User-specific settings/preferences (flexible JSON)
 - `profile_details` (jsonb) - Additional profile data (flexible JSON, e.g. `avatar_url`)
 - `updated_at` (timestamptz) - Last update timestamp
+- `banned_until` (timestamptz, nullable) - Account lockout state. `NULL` = active. A future timestamp = banned until that moment (lazy expiry — no cron sweep). `'infinity'::timestamptz` = permanent ban (used for agent bans and the "permanent" traveler option). Added by `backend/supabase/manage_users_bans_phase1.sql`.
+- `ban_reason` (text, nullable) - Required when an admin issues a ban; surfaced in the admin detail view.
+- `banned_at` (timestamptz, nullable) - When the ban was set.
+- `banned_by` (uuid, FOREIGN KEY → `profiles.id`, nullable) - Which admin issued the ban; `on delete set null`.
+
+**Indexes (non-PK):**
+- `idx_profiles_banned_until` - Partial index on `banned_until where banned_until is not null`. Powers the suspension check that runs on every authenticated request.
 
 **Relationships:**
 - Referenced by `user_id` in: `itinerary`, `booking`, `external_bookings`, `travel_agent`, `recommendation`, `favorites`, `notification_preferences`
 - Referenced by `id` as `created_by` on `trip_images` (optional; set when the API records the uploading user)
+- Self-referenced by `banned_by` (admin who issued a ban) and by `banned_cnics.banned_by` / `banned_cnics.lifted_by`
 - One-to-one with `auth.users` (via `id`)
 
 **Key Notes:**
@@ -116,6 +124,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - Use `id` (not `user_id`) when querying profiles table
 - `preferences` and `profile_details` are jsonb fields for flexible data storage
 - When creating profiles, use `id` from JWT token's `sub` claim
+- Ban enforcement lives in `backend/app/core/security.py` `get_current_user`: a 403 with `detail = "ACCOUNT_SUSPENDED"` is raised when `banned_until` is `'infinity'` or `> now()`. Re-registering with a different email creates a fresh `profiles.id` and is intentionally allowed.
 
 ---
 
@@ -126,14 +135,25 @@ These are documented for roadmap alignment only and are **not part of current ru
 **Columns:**
 - `agent_id` (int8, PRIMARY KEY) - Auto-incrementing agent identifier
 - `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
-- `name` (text) - Agent's business/display name
+- `name` (text) - Agent's personal/display name (owner's name)
+- `business_name` (text, nullable) - Agency / business display name; collected during verification submission. Added by `backend/supabase/agent_verification_v2_phase1.sql`.
 - `email` (text) - Agent's contact email
+- `phone` (text, nullable) - Contact phone collected during verification submission. Added by `agent_verification_v2_phase1.sql`.
+- `cnic_number` (text, nullable, unique when set) - Pakistani CNIC number collected during verification. Unique partial index `uq_travel_agent_cnic_number` blocks duplicate-identity signups. Added by `agent_verification_v2_phase1.sql`.
 - `verification_status` (verification_status_enum) - Agent verification status (currently observed: 'pending', 'approved', 'rejected')
-- `contact_info` (jsonb) - Agent contact details (phone, address, etc.)
-- `profile_details` (jsonb) - Additional agent-specific profile data (e.g. `bio`, `avatar_url`)
+- `submitted_at` (timestamptz, nullable) - Moment the applicant submitted the verification form (distinct from `created_at`, which is the row's first insert). Used to sort the admin pending queue. Added by `agent_verification_v2_phase1.sql`.
+- `contact_info` (jsonb) - Agent contact details. Canonical keys: `{ phone, address, cnic_number }` (kept in sync with the typed columns for backward compatibility).
+- `profile_details` (jsonb) - Additional agent-specific profile data. Canonical keys: `{ bio, avatar_url, documents }`, where `documents` is an object of object **paths** (not URLs) into the private `agent-documents` bucket: `{ cnic_front_path, cnic_back_path, business_license_path }`. The backend mints signed URLs (~1h TTL) when surfacing documents to admins.
 - `created_at` (timestamptz) - Account creation timestamp
 - `rating` (numeric) - Agent's rating (e.g., 1-5, 1-10)
 - `numberofreviews` (int4) - Number of reviews received by the agent
+
+**Indexes (non-PK):**
+- `uq_travel_agent_cnic_number` - Unique partial index on `cnic_number` where not null.
+- `idx_travel_agent_status_submitted` - Composite `(verification_status, submitted_at desc)`; powers the admin pending-queue sort.
+
+**Storage:**
+- Private bucket `agent-documents` (provisioned by `backend/supabase/storage_agent_documents_bucket.sql`) holds CNIC images and business licenses. RLS enforces owner-folder writes (path prefix must equal `auth.uid()::text`); admins read via service-role-minted signed URLs.
 
 **Relationships:**
 - `user_id` → `profiles.id` (many-to-one)
@@ -144,7 +164,35 @@ These are documented for roadmap alignment only and are **not part of current ru
 - To check if user is agent: query `travel_agent` table where `user_id = profiles.id`
 - Default `verification_status` is typically 'pending' for new agents
 - `rating` and `numberofreviews` are used for displaying top rated agents
-- `name` is the canonical agent display-name column; `agent_name` is not a physical column in this table
+- `name` is the agent owner's personal display name; `business_name` is the separate agency/business name; `agent_name` is not a physical column in this table
+- The verification submission flow (see `.cursor/rules/agent-verification-v2-plan.mdc`) writes `business_name`, `phone`, `cnic_number`, `submitted_at`, and `profile_details.documents` in one upsert when an applicant submits the form.
+
+---
+
+## Table: `banned_cnics`
+
+**Purpose:** Blocklist of Pakistani CNIC numbers that are forbidden from registering as travel agents. Used so an admin's ban on a misbehaving agent survives that agent deleting their account or signing up under a new email. Added by `backend/supabase/manage_users_bans_phase1.sql`.
+
+**Columns:**
+- `cnic_number` (text, PRIMARY KEY) - Normalized CNIC (e.g. `12345-1234567-1`); matched against `travel_agent.cnic_number` during agent registration.
+- `reason` (text, NOT NULL) - Required free-text reason supplied by the admin.
+- `banned_at` (timestamptz, NOT NULL, default `now()`) - When the ban was issued.
+- `banned_by` (uuid, FOREIGN KEY → `profiles.id`, nullable) - Admin who issued the ban; `on delete set null`.
+- `lifted_at` (timestamptz, nullable) - When the ban was lifted. NULL = currently active.
+- `lifted_by` (uuid, FOREIGN KEY → `profiles.id`, nullable) - Admin who lifted the ban.
+
+**Indexes (non-PK):**
+- `idx_banned_cnics_active` - Partial index on `cnic_number where lifted_at is null`. Single-probe enforcement at agent-registration time.
+
+**Relationships:**
+- `banned_by` → `profiles.id` (many-to-one, nullable)
+- `lifted_by` → `profiles.id` (many-to-one, nullable)
+- No FK to `travel_agent` by design — the ban must survive that table's row being deleted or recreated.
+
+**Key Notes:**
+- Lifted rows are kept (audit history); never `DELETE`-ed. Re-banning the same CNIC upserts (`on conflict (cnic_number) do update set ..., lifted_at = null, lifted_by = null`).
+- Enforced in `backend/app/api/auth.py` `register_as_agent`: select where `cnic_number = ? and lifted_at is null`; raise 403 if a row is returned.
+- Banning an agent (`POST /api/admin/agents/{id}/ban`) sets the corresponding `profiles.banned_until = 'infinity'` AND inserts/upserts a row here. Unbanning reverses both.
 
 ---
 

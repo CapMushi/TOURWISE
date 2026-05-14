@@ -13,7 +13,15 @@ const getApiBaseUrl = () => {
   return `${protocol}//${hostname}:8000`;
 };
 
-const API_BASE_URL = getApiBaseUrl();   
+const API_BASE_URL = getApiBaseUrl();
+
+/**
+ * Sentinel used by the backend (backend/app/core/security.py) when a user's
+ * account is currently banned. The apiClient interceptor dispatches a
+ * `tourwise:account-suspended` window event when it sees this so the
+ * AuthContext can sign the user out and redirect to /login.
+ */
+export const ACCOUNT_SUSPENDED_DETAIL = "ACCOUNT_SUSPENDED";
 
 // Types for Trip API
 export interface CreateTripRequest {
@@ -81,7 +89,25 @@ export interface CurrentUserContextResponse {
 export interface RegisterAsAgentResponse {
   message: string;
   agent_id: number;
+  verification_status: string;
 }
+
+export interface AgentApplicationDocumentPaths {
+  cnic_front_path: string;
+  cnic_back_path: string;
+  business_license_path?: string;
+}
+
+export interface AgentApplicationPayload {
+  business_name: string;
+  phone: string;
+  cnic_number: string;
+  address?: string;
+  bio?: string;
+  documents: AgentApplicationDocumentPaths;
+}
+
+export type AgentDocumentKind = "cnic_front" | "cnic_back" | "business_license";
 
 export interface AdminDashboardActivity {
   id: string;
@@ -104,17 +130,76 @@ export interface AdminManagedAgent {
   agent_id: number;
   user_id: string;
   name: string;
+  business_name?: string | null;
   email?: string | null;
+  phone?: string | null;
+  cnic_number?: string | null;
   verification_status?: string | null;
   created_at?: string | null;
+  submitted_at?: string | null;
   rating?: number | null;
   numberofreviews: number;
   total_trips: number;
+  banned_until?: string | null;
+  ban_reason?: string | null;
+  is_banned: boolean;
 }
 
 export interface AdminAgentDirectoryResponse {
   pending: AdminManagedAgent[];
   active: AdminManagedAgent[];
+}
+
+export interface AdminTraveler {
+  user_id: string;
+  username?: string | null;
+  email?: string | null;
+  created_at?: string | null;
+  banned_until?: string | null;
+  ban_reason?: string | null;
+  is_banned: boolean;
+}
+
+export interface AdminTravelersResponse {
+  travelers: AdminTraveler[];
+  total: number;
+}
+
+export type BanDuration = "24h" | "7d" | "30d" | "90d" | "permanent";
+
+export interface BanActionResponse {
+  message: string;
+  user_id: string;
+  banned_until?: string | null;
+  is_banned: boolean;
+}
+
+export interface AdminAgentDocuments {
+  cnic_front_url?: string | null;
+  cnic_back_url?: string | null;
+  business_license_url?: string | null;
+}
+
+export interface AdminAgentDetail {
+  agent_id: number;
+  user_id: string;
+  name: string;
+  business_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  cnic_number?: string | null;
+  verification_status?: string | null;
+  created_at?: string | null;
+  submitted_at?: string | null;
+  rating?: number | null;
+  numberofreviews: number;
+  total_trips: number;
+  contact_info?: Record<string, unknown> | null;
+  profile_details?: Record<string, unknown> | null;
+  documents: AdminAgentDocuments;
+  banned_until?: string | null;
+  ban_reason?: string | null;
+  is_banned: boolean;
 }
 
 // Trip List Response
@@ -248,6 +333,23 @@ async function apiClient<T>(
       const error: ApiError = data;
       const errorMessage = error.detail || `API error: ${response.statusText}`;
       console.error(`[API] Request failed: ${response.status} ${response.statusText}`, errorMessage);
+
+      // 403 ACCOUNT_SUSPENDED: dispatch a global event so AuthContext can
+      // sign the user out and bounce them to /login with a toast. Match
+      // both the detail string and the X-Account-Suspended sentinel header
+      // (set by backend security.py) defensively.
+      if (
+        response.status === 403 &&
+        (error.detail === ACCOUNT_SUSPENDED_DETAIL ||
+          response.headers.get("X-Account-Suspended") === "1")
+      ) {
+        window.dispatchEvent(
+          new CustomEvent("tourwise:account-suspended", {
+            detail: { reason: error.detail ?? "ACCOUNT_SUSPENDED" },
+          }),
+        );
+      }
+
       throw new Error(errorMessage);
     }
 
@@ -277,14 +379,25 @@ export async function createTrip(data: CreateTripRequest): Promise<TripResponse>
 }
 
 /**
- * Register current user as a travel agent
+ * Submit (or resubmit) a travel-agent verification application for the
+ * current user. The payload includes business info, CNIC number, and the
+ * object-paths of previously-uploaded documents from the private
+ * `agent-documents` bucket. Server sets verification_status to "pending".
  */
-export async function registerAsAgent(): Promise<RegisterAsAgentResponse> {
-  console.log("[API] Calling register as agent endpoint at:", `${API_BASE_URL}/api/register-as-agent`);
+export async function submitAgentApplication(
+  payload: AgentApplicationPayload,
+): Promise<RegisterAsAgentResponse> {
   return apiClient<RegisterAsAgentResponse>("/api/register-as-agent", {
     method: "POST",
+    body: JSON.stringify(payload),
   });
 }
+
+/**
+ * Legacy alias retained for any pre-existing callers; new code should use
+ * `submitAgentApplication` directly.
+ */
+export const registerAsAgent = submitAgentApplication;
 
 /**
  * Skip agent verification (testing only)
@@ -308,6 +421,12 @@ export async function getAdminAgents(): Promise<AdminAgentDirectoryResponse> {
   });
 }
 
+export async function getAdminAgentDetail(agentId: number): Promise<AdminAgentDetail> {
+  return apiClient<AdminAgentDetail>(`/api/admin/agents/${agentId}`, {
+    method: "GET",
+  });
+}
+
 export async function reviewAgentVerification(
   agentId: number,
   decision: "approved" | "rejected"
@@ -319,6 +438,53 @@ export async function reviewAgentVerification(
       body: JSON.stringify({ decision }),
     }
   );
+}
+
+export async function getAdminTravelers(params: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<AdminTravelersResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set("q", params.q);
+  if (params.limit != null) search.set("limit", String(params.limit));
+  if (params.offset != null) search.set("offset", String(params.offset));
+  const qs = search.toString();
+  return apiClient<AdminTravelersResponse>(`/api/admin/users/travelers${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+  });
+}
+
+export async function banTraveler(
+  userId: string,
+  body: { duration: BanDuration; reason: string },
+): Promise<BanActionResponse> {
+  return apiClient<BanActionResponse>(`/api/admin/users/${userId}/ban`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function unbanTraveler(userId: string): Promise<BanActionResponse> {
+  return apiClient<BanActionResponse>(`/api/admin/users/${userId}/unban`, {
+    method: "POST",
+  });
+}
+
+export async function banAgent(
+  agentId: number,
+  body: { reason: string },
+): Promise<BanActionResponse> {
+  return apiClient<BanActionResponse>(`/api/admin/agents/${agentId}/ban`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function unbanAgent(agentId: number): Promise<BanActionResponse> {
+  return apiClient<BanActionResponse>(`/api/admin/agents/${agentId}/unban`, {
+    method: "POST",
+  });
 }
 
 export async function getCurrentUserContext(): Promise<CurrentUserContextResponse> {
@@ -902,6 +1068,8 @@ const tripImagesBucket =
   (import.meta.env.VITE_SUPABASE_TRIP_IMAGES_BUCKET as string | undefined)?.trim() || "trip-images";
 const profileImagesBucket =
   (import.meta.env.VITE_SUPABASE_PROFILE_IMAGES_BUCKET as string | undefined)?.trim() || "profile-images";
+const agentDocumentsBucket =
+  (import.meta.env.VITE_SUPABASE_AGENT_DOCS_BUCKET as string | undefined)?.trim() || "agent-documents";
 
 export async function uploadTripImage(file: File, tripId: number): Promise<string> {
   const fileExt = file.name.split('.').pop();
@@ -957,6 +1125,40 @@ export async function uploadProfileImage(
   } = supabase.storage.from(profileImagesBucket).getPublicUrl(data.path);
 
   return publicUrl;
+}
+
+/**
+ * Upload a verification document (CNIC image, business license) to the
+ * PRIVATE `agent-documents` bucket. Returns the object's storage path
+ * (e.g. "<user_id>/cnic_front_<ts>.jpg"), NOT a public URL — admins read
+ * documents through backend-minted signed URLs.
+ *
+ * Bucket policy requires the first path segment to be auth.uid()::text.
+ */
+export async function uploadAgentDocument(
+  file: File,
+  userId: string,
+  kind: AgentDocumentKind,
+): Promise<string> {
+  const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+  const objectPath = `${userId}/${kind}_${Date.now()}.${ext}`;
+
+  const { data, error } = await supabase.storage
+    .from(agentDocumentsBucket)
+    .upload(objectPath, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+  if (error) {
+    const hint =
+      error.message?.toLowerCase().includes("bucket") || error.message?.toLowerCase().includes("not found")
+        ? ` Create the private bucket "${agentDocumentsBucket}" via backend/supabase/storage_agent_documents_bucket.sql, or set VITE_SUPABASE_AGENT_DOCS_BUCKET to your bucket name.`
+        : "";
+    throw new Error(`Failed to upload ${kind}: ${error.message}.${hint}`);
+  }
+
+  return data.path;
 }
 
 /**

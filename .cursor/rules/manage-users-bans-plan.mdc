@@ -1,0 +1,392 @@
+---
+description: Phased plan to make /admin/manage-users functional with DB-backed travelers, account-level time-limited traveler bans, and CNIC-based agent bans that survive re-signup.
+globs:
+alwaysApply: false
+---
+
+# Manage Users + Bans — Implementation Plan
+
+## Goal
+
+Wire up `/admin/manage-users` end-to-end with two different ban semantics:
+
+| Subject | Ban model | Duration | What's blocked |
+|---|---|---|---|
+| **Traveler** | Account-level (per `profiles.id`) | 24h / 7d / 30d / 90d / permanent | Existing account locked; explicitly OK to re-register with a different email |
+| **Agent**    | CNIC-based (per `travel_agent.cnic_number`) | Effectively permanent until lifted | Existing account locked AND any future agent registration with the same CNIC |
+
+Today (current state, verified):
+
+- `ManageTravelers.tsx` ships **5 hardcoded rows** (`travelersData` constant) and its Ban button only mutates local state.
+- `ManageAgents.tsx` reads `agent.totalTrips` on line 194 but the API actually returns `total_trips` → that column always renders empty for active agents.
+- `profiles` has no ban columns. No `banned_cnics` table exists.
+- JWT validation in `backend/app/core/security.py` has a single chokepoint (`get_current_user`) — perfect place to enforce suspension.
+- Agent registration in `backend/app/api/auth.py` is the single place where a CNIC enters the system — perfect place to enforce a CNIC ban.
+
+No new dependencies. Migrations are additive and idempotent.
+
+---
+
+## Phase 1 — Database
+
+Goal: add ban storage on `profiles`, the CNIC blocklist, and the indexes that make enforcement queries O(1).
+
+### 1.1 New columns on `public.profiles`
+
+Save as `backend/supabase/manage_users_bans_phase1.sql`:
+
+```sql
+alter table public.profiles
+  add column if not exists banned_until timestamptz,
+  add column if not exists ban_reason   text,
+  add column if not exists banned_at    timestamptz,
+  add column if not exists banned_by    uuid references public.profiles(id) on delete set null;
+
+-- Cheap lookup at JWT-validation time. Most profiles are active (NULL).
+create index if not exists idx_profiles_banned_until
+  on public.profiles (banned_until)
+  where banned_until is not null;
+```
+
+Semantics:
+- `banned_until is null` ⇒ **active** account.
+- `banned_until = 'infinity'::timestamptz` ⇒ **permanent** ban (used for agent bans and the "permanent" traveler option). Postgres supports this natively.
+- `banned_until > now()` ⇒ time-limited ban; expires automatically the next time the user makes a request. No cron required.
+- `banned_until <= now()` ⇒ ban has already expired (the row stays but no longer enforces). Optionally clear on next login (Phase 2 implements lazy cleanup).
+- `ban_reason` is required when banning; surfaced to the admin in the detail view.
+- `banned_by` records which admin issued the ban — useful audit, no UI required for v1.
+
+### 1.2 New table `public.banned_cnics`
+
+```sql
+create table if not exists public.banned_cnics (
+  cnic_number text primary key,
+  reason      text not null,
+  banned_at   timestamptz not null default now(),
+  banned_by   uuid references public.profiles(id) on delete set null,
+  lifted_at   timestamptz,
+  lifted_by   uuid references public.profiles(id) on delete set null
+);
+
+create index if not exists idx_banned_cnics_active
+  on public.banned_cnics (cnic_number)
+  where lifted_at is null;
+```
+
+Why a separate table:
+- The CNIC ban survives the agent's `travel_agent` row being edited, the account being deleted, or the agent re-signing up under a new email.
+- `lifted_at`/`lifted_by` preserves audit history rather than `DELETE`-ing the row.
+- Partial index makes the agent-registration check (`select 1 from banned_cnics where cnic_number = $1 and lifted_at is null`) a single index probe.
+
+### 1.3 Verification queries (paste after running)
+
+```sql
+-- a) Columns
+select column_name, data_type, is_nullable
+from information_schema.columns
+where table_schema = 'public' and table_name = 'profiles'
+  and column_name in ('banned_until','ban_reason','banned_at','banned_by');
+
+-- b) banned_cnics table + index
+select indexname from pg_indexes
+where tablename in ('profiles','banned_cnics')
+  and indexname in ('idx_profiles_banned_until','idx_banned_cnics_active');
+
+-- c) Regression: existing profiles still readable, no false bans
+select count(*) filter (where banned_until is null)  as active_users,
+       count(*) filter (where banned_until is not null) as banned_users
+from public.profiles;
+```
+
+### 1.4 Schema docs updates
+
+- `.cursor/rules/database-schema.mdc`: add the four columns to the `profiles` section and add a new `banned_cnics` section with relationships ("references `profiles.id` (admin) twice via `banned_by` / `lifted_by`").
+- `backend/supabase/schema_reference.sql`: append `profiles.banned_until/ban_reason/banned_at/banned_by` and a new `banned_cnics` block following the existing comment-only convention.
+
+### 1.5 Rollback
+
+```sql
+drop table if exists public.banned_cnics;
+drop index if exists public.idx_profiles_banned_until;
+alter table public.profiles
+  drop column if exists banned_by,
+  drop column if exists banned_at,
+  drop column if exists ban_reason,
+  drop column if exists banned_until;
+```
+
+---
+
+## Phase 2 — Backend
+
+### 2.1 Central enforcement in `backend/app/core/security.py`
+
+Extend `get_current_user` to load the profile row once and 403 if banned. This single change covers every protected endpoint automatically.
+
+```python
+# Inside get_current_user, AFTER decoding the JWT successfully:
+supabase = get_supabase_client()
+profile_row = (
+    supabase.table("profiles")
+    .select("banned_until, ban_reason")
+    .eq("id", user_id)
+    .limit(1)
+    .execute()
+).data
+banned_until_raw = (profile_row or [{}])[0].get("banned_until")
+
+if banned_until_raw:
+    banned_until = _parse_ts(banned_until_raw)  # handles 'infinity' too
+    if banned_until is None or banned_until > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            # Sentinel string the frontend matches against, so we can sign out
+            # specifically on bans (vs. plain "Admin access required" 403s).
+            detail="ACCOUNT_SUSPENDED",
+            headers={"X-Account-Suspended": "1"},
+        )
+```
+
+Notes:
+- `'infinity'` parses cleanly as a Python `datetime.max` substitute — return `None` from `_parse_ts` to mean "no expiry" and treat it as currently-banned.
+- Use the existing service-role `supabase` singleton; one extra select per request is cheap and avoids RLS.
+- Surface the sentinel via both detail and a custom header so the frontend can match deterministically.
+- Existing role-flag logic in `get_user_role_flags` stays untouched.
+
+### 2.2 Session invalidation on ban (best-effort)
+
+When banning, optionally call `supabase.auth.admin.sign_out(user_id, scope="global")`. This kills active refresh tokens so the user gets bounced even before the next JWT expiry. If unavailable in the installed `supabase-py` version, skip — the 403 enforcement still works the next time their access token is refreshed (5–60 min).
+
+### 2.3 New endpoints in `backend/app/api/admin.py`
+
+#### 2.3.1 Travelers list
+
+```
+GET /api/admin/users/travelers?q=<search>&limit=50&offset=0
+```
+
+Returns travelers (= `profiles` rows that are NOT in `user_admin_roles` and NOT in `travel_agent`). Response model:
+
+```python
+class AdminTraveler(BaseModel):
+    user_id: str
+    username: Optional[str]
+    email: Optional[str]
+    created_at: Optional[str]  # join date
+    banned_until: Optional[str]
+    ban_reason: Optional[str]
+    is_banned: bool             # derived: banned_until && (infinity or > now())
+
+class AdminTravelersResponse(BaseModel):
+    travelers: list[AdminTraveler]
+    total: int
+```
+
+Server-side search (`q`) matches `ilike` against `username` and against `auth.users.email`. Email is fetched via `supabase.auth.admin.list_users()` (paginated) OR a single `auth.users` join — pick whichever the existing codebase already uses; `profile.py` reads emails from JWT context, so we may need `supabase.auth.admin.get_user_by_id(user_id)` per row OR a batched `list_users`. Prefer **one** `list_users` call cached for the request to keep response time bounded.
+
+#### 2.3.2 Ban / unban a traveler
+
+```
+POST  /api/admin/users/{user_id}/ban    body: { duration: "24h"|"7d"|"30d"|"90d"|"permanent", reason: str }
+POST  /api/admin/users/{user_id}/unban
+```
+
+Ban handler:
+1. Reject if `user_id` is in `user_admin_roles` (admins cannot ban other admins via this route).
+2. Compute `banned_until`:
+   - `"24h"` → `now() + 1 day`
+   - `"7d"`  → `now() + 7 days`
+   - `"30d"` → `now() + 30 days`
+   - `"90d"` → `now() + 90 days`
+   - `"permanent"` → `'infinity'::timestamptz`
+3. Update `profiles` (banned_until, ban_reason, banned_at, banned_by).
+4. Best-effort session invalidation (2.2).
+5. Return the updated row.
+
+Unban handler: clear all four `profiles.ban*` columns; no further action.
+
+#### 2.3.3 Ban / unban an agent (the CNIC-aware version)
+
+```
+POST  /api/admin/agents/{agent_id}/ban     body: { reason: str }
+POST  /api/admin/agents/{agent_id}/unban
+```
+
+Ban handler:
+1. Load `travel_agent` row by `agent_id`. 404 if missing.
+2. If `cnic_number` is null on the agent row → 422 "Cannot ban an agent without a recorded CNIC".
+3. Atomic two-step:
+   - `update profiles set banned_until = 'infinity', ban_reason, banned_at, banned_by where id = travel_agent.user_id`.
+   - `insert into banned_cnics(cnic_number, reason, banned_by) values (...) on conflict (cnic_number) do update set reason = excluded.reason, banned_at = now(), banned_by = excluded.banned_by, lifted_at = null, lifted_by = null`.
+4. Belt-and-braces: also set `travel_agent.verification_status = 'rejected'` so they lose the agent dashboard even on the off chance the suspension check is bypassed.
+5. Best-effort session invalidation.
+
+Unban handler (reverses both):
+- Clear `profiles.ban*` columns for that user.
+- Update `banned_cnics set lifted_at = now(), lifted_by = admin_id where cnic_number = agent.cnic_number and lifted_at is null`. (Keep the historical row.)
+- Optional: restore `travel_agent.verification_status` to `'approved'` if you want one-click reinstatement; cleaner to require a fresh review — pick **leave as `'rejected'`** so admin reviews them again before they list trips.
+
+### 2.4 CNIC blocklist enforcement at registration
+
+In `backend/app/api/auth.py` `register_as_agent`, just after CNIC normalisation and **before** the upsert:
+
+```python
+banned = (
+    supabase.table("banned_cnics")
+    .select("cnic_number, reason")
+    .eq("cnic_number", cnic_normalised)
+    .is_("lifted_at", "null")
+    .limit(1)
+    .execute()
+).data
+if banned:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"This CNIC is banned from agent registration. Reason: {banned[0].get('reason') or 'No reason recorded'}",
+    )
+```
+
+This is the **only** place that needs to know about `banned_cnics`. No signup interception, no auth-trigger.
+
+### 2.5 Surface ban state in existing admin responses
+
+- `AdminManagedAgent` (list response): add `cnic_number`, `banned_until`, `is_banned`, `ban_reason`. Surface them in `_serialize_agents`.
+- `AdminAgentDetailResponse`: add the same three fields. Already pulls `contact_info`/`profile_details`, so widening is one column in `AGENT_DETAIL_COLUMNS`.
+- Sort the **Active** tab so banned agents appear first (or render a filter pill); decide in the UI step.
+
+---
+
+## Phase 3 — Frontend
+
+### 3.1 Shared `BanDialog` component
+
+New file: `frontend/src/components/admin/BanDialog.tsx`.
+
+Props:
+```ts
+interface BanDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  subject: { kind: "traveler" | "agent"; displayName: string };
+  onSubmit: (input: { duration?: "24h" | "7d" | "30d" | "90d" | "permanent"; reason: string }) => Promise<void> | void;
+}
+```
+
+Behavior:
+- For **traveler** subjects: render a `RadioGroup` with the five durations + a Reason `Textarea`. Submit disabled until both filled.
+- For **agent** subjects: hide the duration radio (always permanent / CNIC-wide); show a warning callout: *"This will lock the account AND ban CNIC `XXXXX-XXXXXXX-X` from any future agent registration."* Reason still required.
+- Built on the existing shadcn `Dialog`, `RadioGroup`, `Textarea`, `Button` primitives — no new deps.
+
+### 3.2 `api.ts` additions
+
+```ts
+export interface AdminTraveler {
+  user_id: string;
+  username: string | null;
+  email: string | null;
+  created_at: string | null;
+  banned_until: string | null;
+  ban_reason: string | null;
+  is_banned: boolean;
+}
+export interface AdminTravelersResponse { travelers: AdminTraveler[]; total: number; }
+
+export function getAdminTravelers(params: { q?: string; limit?: number; offset?: number; }): Promise<AdminTravelersResponse>;
+
+export function banTraveler(userId: string, body: { duration: "24h"|"7d"|"30d"|"90d"|"permanent"; reason: string; }): Promise<{ message: string; banned_until: string | null }>;
+export function unbanTraveler(userId: string): Promise<{ message: string }>;
+export function banAgent(agentId: number, body: { reason: string }): Promise<{ message: string }>;
+export function unbanAgent(agentId: number): Promise<{ message: string }>;
+
+// Extend AdminManagedAgent and AdminAgentDetail with cnic_number, banned_until, ban_reason, is_banned.
+```
+
+### 3.3 `ManageTravelers.tsx` — full rewrite
+
+- Delete the `travelersData` constant entirely.
+- Replace `useState(travelersData)` with a TanStack `useQuery(["admin-travelers", debouncedQ], () => getAdminTravelers({ q: debouncedQ }))`.
+- Debounce the search input by ~300ms.
+- Render a `Banned until <date>` red pill instead of the green `Active` text when `is_banned`. When banned, show an **Unban** button (calls `unbanTraveler` via a `useMutation`); when active, show the existing **Ban** button which opens `BanDialog`.
+- Toast on success/failure; invalidate `["admin-travelers"]` on settle.
+
+### 3.4 `ManageAgents.tsx` — fixes + ban wiring
+
+- Fix `agent.totalTrips` → `agent.total_trips` (or, cleaner, rename the type/mapper so both sides agree).
+- Add `CNIC` column to the **Active** tab (`agent.cnic_number || "—"`).
+- For active agents, swap the existing "Admin-approved" placeholder for either:
+  - a `Banned` pill + **Unban** button when `is_banned`, or
+  - a **Ban** button (`BanDialog` with `kind: "agent"`) when active.
+- The Pending tab is unchanged — bans only make sense for already-approved agents.
+
+### 3.5 `AgentProfileDetail.tsx` — surface ban state
+
+- Inside the "Identity" card add a `Ban status` field (red pill or green "Active").
+- If banned, replace the bottom-of-page decision bar with a single **Unban agent** button. If active, add a **Ban agent** button next to the existing approve/reject row.
+
+### 3.6 Global 403-on-suspended handling
+
+`AuthContext.tsx` already wraps API calls indirectly via `useAuth()`. Add a small interceptor at the `apiClient` layer in `frontend/src/lib/api.ts` that does this on any 403:
+
+```ts
+if (response.status === 403) {
+  const body = await response.clone().json().catch(() => null);
+  if (body?.detail === "ACCOUNT_SUSPENDED") {
+    // hard sign-out path
+    window.dispatchEvent(new CustomEvent("tourwise:account-suspended", { detail: body }));
+  }
+  // still throw so the caller can react
+  throw new Error(body?.detail || `HTTP ${response.status}`);
+}
+```
+
+Then in `AuthContext.tsx`:
+
+```ts
+useEffect(() => {
+  const handler = () => {
+    toast.error("Your account has been suspended by an admin.");
+    void signOut();
+    navigate("/login");
+  };
+  window.addEventListener("tourwise:account-suspended", handler);
+  return () => window.removeEventListener("tourwise:account-suspended", handler);
+}, [signOut, navigate]);
+```
+
+This keeps the matching logic out of every individual page.
+
+### 3.7 Optional polish (skip if pressed for time)
+
+- Active agents table: split into "Active" vs "Banned" sub-rows or add a status filter dropdown.
+- Show `Banned by <admin name>` in the agent detail page (extra `banned_by_username` field on the detail response, joined from `profiles`).
+- Dashboard stat tile: "Banned users" count, linking to a filtered Manage Users view.
+
+---
+
+## Acceptance checklist
+
+After Phase 3 lands, manually verify:
+
+- [ ] `/admin/manage-users` → Travelers tab loads real users from `profiles`. Search by name/email returns hits.
+- [ ] Ban a traveler for 24h → their next request returns 403 with `detail=ACCOUNT_SUSPENDED` → they're auto-signed-out and bounced to `/login` with a toast. Confirmed in the network tab via the browser dev console.
+- [ ] Same banned traveler can sign up again with a *different* email; new account is active immediately.
+- [ ] Wait 24h (or temporarily set duration to a few seconds in the DB) → ban auto-expires, user can log back in without an admin action.
+- [ ] Permanent ban behaves the same but never expires (`banned_until = 'infinity'`).
+- [ ] Admins cannot ban other admins (route returns 422 or 403).
+- [ ] Agents tab → Active sub-list shows CNIC and current ban status; `total_trips` column is populated (no more empty cells).
+- [ ] Ban an active agent → their account is locked AND `banned_cnics` has a row for their CNIC. Trying to register a new account with the same CNIC against `POST /api/register-as-agent` returns 403 with the ban reason.
+- [ ] Unban the agent → both the profile lock and the `banned_cnics` row are reversed (`lifted_at` set); a fresh re-registration with the same CNIC succeeds.
+- [ ] Existing flows (`/admin/dashboard`, `/admin/manage-agents` Pending tab, agent verification submission) still work unchanged.
+- [ ] No new npm or pip dependencies introduced.
+
+---
+
+## Decision log
+
+- **`banned_until` sentinel for permanent bans** → use `'infinity'::timestamptz`. Postgres-native, indexes correctly, no extra boolean column to keep in sync.
+- **Separate `banned_cnics` table vs. column on `travel_agent`** → separate table. The CNIC ban must survive agent-row deletion and act across multiple accounts; tying it to a `travel_agent` row breaks the moment that row is removed.
+- **Enforcement in `get_current_user` vs. middleware** → keep it in `get_current_user`. Middleware would re-decode the JWT, but `get_current_user` already does that and is on the dependency path for every protected endpoint.
+- **403 vs 401 for suspended account** → 403 with `detail = "ACCOUNT_SUSPENDED"`. 401 would trigger refresh-token retries; 403 with a clear sentinel cleanly signals "do not retry, sign out".
+- **Lazy ban expiry vs. cron sweep** → lazy. The first request after expiry simply doesn't 403; an idle banned account never executes any cleanup, which is fine.
+- **Agent unban → restore `verification_status` to `approved`?** → no. Require a fresh admin review. Stops a knee-jerk unban from immediately re-publishing trips by a problem operator.
+- **CNIC required for ban** → yes. An agent without a stored CNIC cannot be CNIC-banned; the admin should fall back to plain account suspension (we could add a fallback "lock account only" button later, but it's not in scope for this plan).
