@@ -11,6 +11,7 @@ interface TripCardFlexibleProps {
   variant?: "traveler" | "agent";
   onClick?: () => void;
   showAgentName?: boolean;
+  collaboratorCount?: number;
 }
 
 const transportIcons: Record<string, React.ReactNode> = {
@@ -29,6 +30,7 @@ export function TripCardFlexible({
   variant = "traveler",
   onClick,
   showAgentName = true,
+  collaboratorCount,
 }: TripCardFlexibleProps) {
   const departureDate = new Date(trip.departure_time);
   const arrivalDate = new Date(trip.arrival_time);
@@ -97,6 +99,11 @@ export function TripCardFlexible({
           {suitabilityLabel && (
             <Badge className="bg-white/90 text-heading border-0">
               {suitabilityLabel}
+            </Badge>
+          )}
+          {(collaboratorCount !== undefined ? collaboratorCount : (trip.collaborator_count ?? 0)) >= 1 && (
+            <Badge className="bg-violet-100 text-violet-700 border border-violet-300">
+              Collaborated
             </Badge>
           )}
         </div>

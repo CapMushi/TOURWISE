@@ -15,6 +15,7 @@ from app.api import (
     recommendations,
     reviews,
     chat,
+    trip_collaborators,
 )
 
 app = FastAPI(
@@ -60,6 +61,7 @@ app.include_router(reviews.router, prefix="/api/reviews", tags=["reviews"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(trip_collaborators.router, prefix="/api/collaborators", tags=["collaborators"])
 
 
 @app.get("/")

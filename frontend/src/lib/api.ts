@@ -51,6 +51,7 @@ export interface TripResponse {
   source?: "local" | "external";
   provider_id?: string | null;
   external_ref?: string | null;
+  collaborator_count?: number;
 }
 
 // API Error Response
@@ -1310,4 +1311,59 @@ export async function getAgentNotificationFeed(limit = 30): Promise<AgentNotific
   );
 }
 
+// ---------------------------------------------------------------------------
+// Collaborator Invites
+// ---------------------------------------------------------------------------
+
+export interface CollaboratorInvite {
+  invite_id: number;
+  trip_id: number;
+  trip_label: string;        // "origin → destination"
+  inviting_agent_id: number;
+  inviting_agent_name: string;
+  collaborating_agent_id: number;
+  collaborating_agent_name: string;
+  message: string | null;
+  status: "pending" | "accepted" | "rejected" | "cancelled";
+  created_at: string;
+}
+
+export async function createCollaboratorInvite(data: {
+  trip_id: number;
+  collaborating_identifier: string;
+  message?: string | null;
+}): Promise<CollaboratorInvite> {
+  return apiClient<CollaboratorInvite>("/api/collaborators", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getCollaboratorInvites(
+  type: "sent" | "received" | "all" = "all",
+  tripId?: number
+): Promise<CollaboratorInvite[]> {
+  const params = new URLSearchParams({ type });
+  if (tripId !== undefined) params.set("trip_id", String(tripId));
+  return apiClient<CollaboratorInvite[]>(`/api/collaborators?${params}`, { method: "GET" });
+}
+
+export async function updateCollaboratorInvite(
+  inviteId: number,
+  inviteStatus: "accepted" | "rejected" | "cancelled"
+): Promise<CollaboratorInvite> {
+  return apiClient<CollaboratorInvite>(`/api/collaborators/${inviteId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: inviteStatus }),
+  });
+}
+
+export interface TripCollaboratorInfo {
+  agent_id: number;
+  agent_name: string;
+}
+
+export async function getTripCollaborators(tripId: number): Promise<TripCollaboratorInfo[]> {
+  return apiClient<TripCollaboratorInfo[]>(`/api/collaborators/trip/${tripId}`, { method: "GET" });
+}
 

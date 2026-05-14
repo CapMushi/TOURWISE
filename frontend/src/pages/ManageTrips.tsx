@@ -83,6 +83,7 @@ export default function ManageTrips() {
               trip={trip}
               variant="agent"
               showAgentName={false}
+              collaboratorCount={trip.collaborator_count ?? 0}
               onClick={() => navigate(`/agent/manage-details/${trip.trip_id}`)}
             />
           ))}

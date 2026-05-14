@@ -131,8 +131,8 @@ export default function AddTrip() {
 
       const response = await createTrip(requestData);
 
-      toast.success(`Trip created successfully! Trip ID: ${response.trip_id}`);
-      navigate("/agent/manage-trips");
+      toast.success("Trip created successfully! You can now add collaborators below.");
+      navigate(`/agent/manage-details/${response.trip_id}`, { state: { newTrip: true } });
     } catch (error) {
       console.error("Error creating trip:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to create trip. Please try again.";

@@ -1,17 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getTripById, updateTrip, uploadTripImage } from "@/lib/api";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  getTripById,
+  updateTrip,
+  uploadTripImage,
+  getCollaboratorInvites,
+  createCollaboratorInvite,
+  updateCollaboratorInvite,
+  type CollaboratorInvite,
+} from "@/lib/api";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Heart } from "lucide-react";
+import { AlertCircle, Heart, UsersRound, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getTripResources,
@@ -26,6 +35,7 @@ const TRIP_RESOURCES_EVENT = "tourwise-trip-resources-changed";
 
 export default function ManageDetails() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -40,6 +50,8 @@ export default function ManageDetails() {
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [collaboratorInput, setCollaboratorInput] = useState("");
+  const [collaboratorError, setCollaboratorError] = useState("");
   const [linkedResources, setLinkedResources] = useState<TripResourcesPayload>({
     buses: [],
     hotels: [],
@@ -58,6 +70,40 @@ export default function ManageDetails() {
     window.addEventListener(TRIP_RESOURCES_EVENT, onResourcesChanged);
     return () => window.removeEventListener(TRIP_RESOURCES_EVENT, onResourcesChanged);
   }, [refreshLinkedResources]);
+
+  // Show "add collaborators" hint when arriving from AddTrip
+  useEffect(() => {
+    if ((location.state as any)?.newTrip) {
+      toast({ title: "Trip created!", description: "You can now add collaborators below." });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Collaborator invites for this trip
+  const { data: collaboratorInvites, refetch: refetchInvites } = useQuery({
+    queryKey: ["collab-invites", "sent", tripIdNum],
+    queryFn: () => getCollaboratorInvites("sent", tripIdNum!),
+    enabled: !!tripIdNum,
+    retry: 1,
+  });
+
+  const addCollaboratorMutation = useMutation({
+    mutationFn: (identifier: string) =>
+      createCollaboratorInvite({ trip_id: tripIdNum!, collaborating_identifier: identifier }),
+    onSuccess: () => {
+      toast({ title: "Invite sent!", description: "The agent will see your invite in their notifications." });
+      setCollaboratorInput("");
+      setCollaboratorError("");
+      refetchInvites();
+    },
+    onError: (err: any) => {
+      setCollaboratorError(err.message || "Agent not found. Try their exact username or agent ID.");
+    },
+  });
+
+  const cancelInviteMutation = useMutation({
+    mutationFn: (inviteId: number) => updateCollaboratorInvite(inviteId, "cancelled"),
+    onSuccess: () => { refetchInvites(); },
+  });
 
   // Pre-populated with existing trip data
   const [formData, setFormData] = useState({
@@ -683,6 +729,96 @@ export default function ManageDetails() {
                   Upload an image to display on trip cards and details page (max 5MB)
                 </p>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Collaborators */}
+        <Card className="glass-panel border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <UsersRound className="h-5 w-5 text-primary" />
+              <CardTitle className="font-heading text-2xl">Collaborators</CardTitle>
+            </div>
+            <CardDescription>
+              Invite other travel agents to collaborate on this trip. They will receive a notification.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {/* Current invites */}
+            {collaboratorInvites && collaboratorInvites.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-heading">Current collaborators & invites</p>
+                {collaboratorInvites.map((invite) => (
+                  <div
+                    key={invite.invite_id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-white/20 bg-white/5"
+                  >
+                    <div className="flex items-center gap-3">
+                      {invite.status === "accepted" && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                      {invite.status === "pending" && <Clock className="h-4 w-4 text-yellow-500" />}
+                      {invite.status === "rejected" && <XCircle className="h-4 w-4 text-red-500" />}
+                      {invite.status === "cancelled" && <XCircle className="h-4 w-4 text-gray-400" />}
+                      <span className="text-sm font-medium">{invite.collaborating_agent_name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={
+                          invite.status === "accepted"
+                            ? "border-green-300 text-green-700"
+                            : invite.status === "pending"
+                            ? "border-yellow-300 text-yellow-700"
+                            : "border-gray-300 text-gray-500"
+                        }
+                      >
+                        {invite.status.charAt(0).toUpperCase() + invite.status.slice(1)}
+                      </Badge>
+                      {invite.status === "pending" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => cancelInviteMutation.mutate(invite.invite_id)}
+                          disabled={cancelInviteMutation.isLoading}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-body-text">No collaborators yet.</p>
+            )}
+
+            {/* Add new collaborator */}
+            <div className="space-y-2">
+              <Label htmlFor="collaborator-input">Add collaborator (username or agent ID)</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="collaborator-input"
+                  placeholder="e.g., johnsmith or 42"
+                  value={collaboratorInput}
+                  onChange={(e) => { setCollaboratorInput(e.target.value); setCollaboratorError(""); }}
+                  className="glass-panel border-white/30"
+                />
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (!collaboratorInput.trim()) {
+                      setCollaboratorError("Please enter a username or agent ID.");
+                      return;
+                    }
+                    addCollaboratorMutation.mutate(collaboratorInput.trim());
+                  }}
+                  disabled={addCollaboratorMutation.isLoading}
+                >
+                  {addCollaboratorMutation.isLoading ? "Sending…" : "Invite"}
+                </Button>
+              </div>
+              {collaboratorError && <p className="text-sm text-destructive">{collaboratorError}</p>}
             </div>
           </CardContent>
         </Card>

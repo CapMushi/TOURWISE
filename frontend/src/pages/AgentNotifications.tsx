@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
-import { Bell, Bus, CalendarDays, MessageSquare } from "lucide-react";
+import { Bell, Bus, CalendarDays, MessageSquare, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,6 +15,8 @@ function categoryIcon(category: string) {
       return CalendarDays;
     case "message":
       return MessageSquare;
+    case "collaboration":
+      return UsersRound;
     default:
       return Bell;
   }
@@ -28,7 +30,7 @@ export default function AgentNotifications() {
   });
 
   const openCollaboration = (item: AgentNotificationFeedItem) => {
-    if (item.category === "pooling" || item.category === "message") {
+    if (item.category === "pooling" || item.category === "message" || item.category === "collaboration") {
       navigate("/agent/collaboration");
     } else {
       navigate("/agent/manage-trips");

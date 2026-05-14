@@ -24,7 +24,6 @@ import AdminDashboard from "./pages/AdminDashboard";
 import ManageAgents from "./pages/ManageAgents";
 import ManageTravelers from "./pages/ManageTravelers";
 import ManageUsers from "./pages/ManageUsers";
-import TripApprovals from "./pages/TripApprovals";
 import AdminTripView from "./pages/AdminTripView";
 import TravelerProfileDetail from "./pages/TravelerProfileDetail";
 import AgentProfileDetail from "./pages/AgentProfileDetail";
@@ -286,16 +285,6 @@ const App = () => (
                 <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <AdminDashboard />
-                  </AppLayout>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/trip-approvals"
-              element={
-                <ProtectedRoute requiredRole="admin">
-                  <AppLayout userRole="admin">
-                    <TripApprovals />
                   </AppLayout>
                 </ProtectedRoute>
               }

@@ -40,7 +40,6 @@ const agentItems = [
 
 const adminItems = [
   { title: "Dashboard", url: "/admin", icon: LayoutDashboard },
-  { title: "Trip Approvals", url: "/admin/trip-approvals", icon: Briefcase },
   { title: "Manage Users", url: "/admin/manage-users", icon: Users },
   { title: "Reports & Moderation", url: "/admin/moderation", icon: MessageSquare },
   { title: "Settings", url: "/admin/settings", icon: UserCog },

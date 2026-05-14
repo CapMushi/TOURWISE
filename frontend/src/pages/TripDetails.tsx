@@ -7,6 +7,7 @@ import {
   getMyReviewForTrip,
   getTripById,
   getTripReviews,
+  getTripCollaborators,
   removeFavorite,
   upsertTripReview,
 } from "@/lib/api";
@@ -21,7 +22,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, Check, MapPin, Calendar, Users, Banknote, Heart, ChevronLeft, ChevronRight, Star } from "lucide-react";
+import { AlertCircle, Check, MapPin, Calendar, Users, Banknote, Heart, ChevronLeft, ChevronRight, Star, UsersRound } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { GoogleMapFromAddress } from "@/components/maps/GoogleMapFromAddress";
@@ -60,6 +61,13 @@ export default function TripDetails() {
     queryKey: ["my-trip-review", tripIdNum],
     queryFn: () => getMyReviewForTrip(tripIdNum!),
     enabled: !!tripIdNum && !!trip && trip.source !== "external",
+  });
+
+  const { data: collaborators = [] } = useQuery({
+    queryKey: ["trip-collaborators", tripIdNum],
+    queryFn: () => getTripCollaborators(tripIdNum!),
+    enabled: !!tripIdNum,
+    retry: 1,
   });
 
   const averageTripRating = useMemo(() => {
@@ -358,6 +366,34 @@ export default function TripDetails() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Collaborating Agents */}
+          {collaborators.length > 0 && (
+            <Card className="glass-card border-0">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <UsersRound className="h-5 w-5 text-primary" />
+                  <CardTitle className="font-heading">Collaborating Agents</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-body-text mb-4">
+                  This trip is co-managed by multiple travel agents who are working together on this route.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {collaborators.map((c) => (
+                    <div
+                      key={c.agent_id}
+                      className="flex items-center gap-2 px-3 py-2 rounded-full bg-violet-50 border border-violet-200 text-violet-800 text-sm font-medium"
+                    >
+                      <UsersRound className="h-4 w-4 text-violet-500" />
+                      {c.agent_name}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid gap-8 md:grid-cols-2">
             <Card className="glass-card border-0">

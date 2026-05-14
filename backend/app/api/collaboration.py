@@ -1134,6 +1134,29 @@ def get_agent_notification_feed(
                     "created_at": b["booking_date"],
                 })
 
+        # Collaboration invites (pending, where current agent is the collaborating agent)
+        collab_res = (
+            supabase.table("trip_collaborators")
+            .select("*")
+            .eq("collaborating_agent_id", agent_id)
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        for inv in collab_res.data or []:
+            inv_agent = supabase.table("travel_agent").select("name").eq("agent_id", inv["inviting_agent_id"]).execute()
+            inv_name = inv_agent.data[0].get("name") if inv_agent.data else f"Agent #{inv['inviting_agent_id']}"
+            trip_r = supabase.table("trips").select("origin_city, destination_city").eq("trip_id", inv["trip_id"]).execute()
+            t = trip_r.data[0] if trip_r.data else {}
+            items.append({
+                "notification_id": f"collab-{inv['invite_id']}",
+                "category": "collaboration",
+                "title": "Collaboration invite",
+                "body": f"{inv_name} invited you to collaborate on {t.get('origin_city', '')} → {t.get('destination_city', '')}. Review in Collaboration Hub.",
+                "created_at": inv["created_at"],
+            })
+
         unread_cnt_res = (
             supabase.table("agent_messages")
             .select("message_id", count="exact")

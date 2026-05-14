@@ -13,6 +13,7 @@ import {
   User,
   Star,
   Filter,
+  UsersRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,10 +38,14 @@ import {
   getUnreadMessageCount,
   markAgentConversationRead,
   getMyTrips,
+  getCollaboratorInvites,
+  createCollaboratorInvite,
+  updateCollaboratorInvite,
   type CollaborationTripFilters,
   type BusPoolingRequestCreate,
   type BusPoolingRequestUpdate,
   type AgentMessageCreate,
+  type CollaboratorInvite,
 } from "@/lib/api";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -65,6 +70,9 @@ export default function CollaborationHub() {
     const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
     const [poolingDialogOpen, setPoolingDialogOpen] = useState(false);
     const [selectedTripForPooling, setSelectedTripForPooling] = useState<any>(null);
+    const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+    const [inviteTargetTrip, setInviteTargetTrip] = useState<any>(null);
+    const [inviteMessage, setInviteMessage] = useState("");
     const [messageDialogOpen, setMessageDialogOpen] = useState(false);
     const [selectedAgentForMessage, setSelectedAgentForMessage] = useState<number | null>(null);
     const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -153,6 +161,18 @@ export default function CollaborationHub() {
     },
   });
 
+  const { data: receivedInvites } = useQuery({
+    queryKey: ["collab-invites", "received"],
+    queryFn: () => getCollaboratorInvites("received"),
+    retry: 1,
+  });
+
+  const { data: sentInvites, refetch: refetchSentInvites } = useQuery({
+    queryKey: ["collab-invites", "sent"],
+    queryFn: () => getCollaboratorInvites("sent"),
+    retry: 1,
+  });
+
   useEffect(() => {
     if (selectedAgent === null) return;
     let cancelled = false;
@@ -210,6 +230,31 @@ export default function CollaborationHub() {
     },
   });
 
+  const createInviteMutation = useMutation({
+    mutationFn: createCollaboratorInvite,
+    onSuccess: () => {
+      toast({ title: "Invite Sent", description: "Collaboration invite sent successfully!" });
+      setInviteDialogOpen(false);
+      setInviteMessage("");
+      queryClient.invalidateQueries({ queryKey: ["collab-invites"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to send invite", variant: "destructive" });
+    },
+  });
+
+  const updateInviteMutation = useMutation({
+    mutationFn: ({ inviteId, inviteStatus }: { inviteId: number; inviteStatus: "accepted" | "rejected" | "cancelled" }) =>
+      updateCollaboratorInvite(inviteId, inviteStatus),
+    onSuccess: () => {
+      toast({ title: "Success", description: "Collaboration invite updated." });
+      queryClient.invalidateQueries({ queryKey: ["collab-invites"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to update invite", variant: "destructive" });
+    },
+  });
+
   const sendMessageMutation = useMutation({
     mutationFn: sendMessage,
     onSuccess: () => {
@@ -240,6 +285,33 @@ export default function CollaborationHub() {
   const handleRequestPooling = (trip: any) => {
     setSelectedTripForPooling(trip);
     setPoolingDialogOpen(true);
+  };
+
+  const handleSendInvite = (trip: any) => {
+    setInviteTargetTrip(trip);
+    setInviteMessage("");
+    setInviteDialogOpen(true);
+  };
+
+  // Compute per-criterion match breakdown from two trip objects
+  const computeMatchBreakdown = (myTrip: any, theirTrip: any) => {
+    const parseDate = (v: string) => { try { return new Date(v.replace("Z", "+00:00")); } catch { return null; } };
+    const dep1 = parseDate(myTrip?.departure_time);
+    const dep2 = parseDate(theirTrip?.departure_time);
+    const arr1 = parseDate(myTrip?.arrival_time);
+    const arr2 = parseDate(theirTrip?.arrival_time);
+    const TWO_HOURS = 2 * 3600 * 1000;
+    const depMatch = dep1 && dep2 ? Math.abs(dep1.getTime() - dep2.getTime()) <= TWO_HOURS : false;
+    const arrMatch = arr1 && arr2 ? Math.abs(arr1.getTime() - arr2.getTime()) <= TWO_HOURS : false;
+    const s1 = myTrip?.available_seats ?? 0;
+    const s2 = theirTrip?.available_seats ?? 0;
+    const seatMatch = s1 > 0 && s2 > 0 ? (Math.min(s1, s2) / Math.max(s1, s2)) >= 0.80 : false;
+    return [
+      { label: "Route match", pts: 0.30, matched: true },
+      { label: "Departure timing", pts: 0.30, matched: depMatch },
+      { label: "Arrival timing", pts: 0.20, matched: arrMatch },
+      { label: "Seat capacity", pts: 0.20, matched: seatMatch },
+    ];
   };
 
   const handleSendMessage = (agentId: number) => {
@@ -324,7 +396,7 @@ export default function CollaborationHub() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="browse">Browse Agents & Trips</TabsTrigger>
           <TabsTrigger value="matching">Matching Trips</TabsTrigger>
           <TabsTrigger value="requests">
@@ -340,6 +412,14 @@ export default function CollaborationHub() {
             {unreadCount && unreadCount.count && unreadCount.count > 0 && (
               <Badge variant="destructive" className="ml-2">
                 {unreadCount.count}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="invites">
+            Collaboration Invites
+            {receivedInvites && receivedInvites.filter((i) => i.status === "pending").length > 0 && (
+              <Badge variant="destructive" className="ml-2">
+                {receivedInvites.filter((i) => i.status === "pending").length}
               </Badge>
             )}
           </TabsTrigger>
@@ -470,11 +550,11 @@ export default function CollaborationHub() {
                       <div className="flex gap-2">
                         <Button
                           size="sm"
-                          onClick={() => trip && trip.trip_id && handleRequestPooling(trip)}
-                          className="flex-1"
+                          onClick={() => trip && trip.trip_id && handleSendInvite(trip)}
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
                           disabled={!trip || !trip.trip_id}
                         >
-                          <Bus className="h-4 w-4 mr-2" />
+                          <UsersRound className="h-4 w-4 mr-2" />
                           Request Pooling
                         </Button>
                         <Button
@@ -546,6 +626,29 @@ export default function CollaborationHub() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
+                    {/* Match score breakdown */}
+                    <div className="mb-4 p-3 rounded-lg bg-muted/40">
+                      <p className="text-xs font-semibold text-body-text mb-2 uppercase tracking-wide">Match Breakdown</p>
+                      <div className="flex flex-wrap gap-2">
+                        {computeMatchBreakdown(match.my_trip, match.trip).map((c) => (
+                          <span
+                            key={c.label}
+                            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium ${
+                              c.matched
+                                ? "bg-green-50 border-green-300 text-green-700"
+                                : "bg-gray-50 border-gray-200 text-gray-400"
+                            }`}
+                          >
+                            {c.matched
+                              ? <CheckCircle2 className="h-3 w-3 text-green-600" />
+                              : <XCircle className="h-3 w-3 text-gray-400" />
+                            }
+                            {c.label}
+                            <span className="opacity-60">+{(c.pts * 100).toFixed(0)}%</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <h4 className="font-semibold text-sm text-body-text">Your Trip</h4>
@@ -581,11 +684,11 @@ export default function CollaborationHub() {
                     </div>
                     <div className="flex gap-2 mt-4">
                       <Button
-                        onClick={() => handleRequestPooling(match.trip)}
-                        className="flex-1"
+                        onClick={() => handleSendInvite(match.trip)}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
                       >
-                        <Bus className="h-4 w-4 mr-2" />
-                        Request Bus Pooling
+                        <UsersRound className="h-4 w-4 mr-2" />
+                        Request Pooling
                       </Button>
                       <Button
                         variant="outline"
@@ -780,6 +883,116 @@ export default function CollaborationHub() {
           </Tabs>
         </TabsContent>
 
+        {/* Collaboration Invites Tab */}
+        <TabsContent value="invites" className="space-y-6">
+          <Tabs defaultValue="received" className="w-full">
+            <TabsList>
+              <TabsTrigger value="received">
+                Received
+                {receivedInvites && receivedInvites.filter((i) => i.status === "pending").length > 0 && (
+                  <Badge variant="destructive" className="ml-2">
+                    {receivedInvites.filter((i) => i.status === "pending").length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="sent">Sent</TabsTrigger>
+            </TabsList>
+
+            {/* Received invites */}
+            <TabsContent value="received" className="space-y-4 mt-4">
+              {!receivedInvites || receivedInvites.length === 0 ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>No collaboration invites received yet.</AlertDescription>
+                </Alert>
+              ) : (
+                receivedInvites.map((invite) => (
+                  <Card key={invite.invite_id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base">
+                          Invite from {invite.inviting_agent_name}
+                        </CardTitle>
+                        {getStatusBadge(invite.status)}
+                      </div>
+                      <CardDescription>{invite.trip_label}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {invite.message && (
+                        <div className="glass-card p-3 text-sm">
+                          <strong>Message:</strong> {invite.message}
+                        </div>
+                      )}
+                      <p className="text-xs text-body-text">Received {formatDate(invite.created_at, "MMM dd, yyyy HH:mm")}</p>
+                      {invite.status === "pending" && (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => updateInviteMutation.mutate({ inviteId: invite.invite_id, inviteStatus: "accepted" })}
+                            disabled={updateInviteMutation.isLoading}
+                          >
+                            <CheckCircle2 className="h-4 w-4 mr-1" /> Accept
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => updateInviteMutation.mutate({ inviteId: invite.invite_id, inviteStatus: "rejected" })}
+                            disabled={updateInviteMutation.isLoading}
+                          >
+                            <XCircle className="h-4 w-4 mr-1" /> Reject
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </TabsContent>
+
+            {/* Sent invites */}
+            <TabsContent value="sent" className="space-y-4 mt-4">
+              {!sentInvites || sentInvites.length === 0 ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>No collaboration invites sent yet.</AlertDescription>
+                </Alert>
+              ) : (
+                sentInvites.map((invite) => (
+                  <Card key={invite.invite_id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base">
+                          Invite to {invite.collaborating_agent_name}
+                        </CardTitle>
+                        {getStatusBadge(invite.status)}
+                      </div>
+                      <CardDescription>{invite.trip_label}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {invite.message && (
+                        <div className="glass-card p-3 text-sm">
+                          <strong>Your Message:</strong> {invite.message}
+                        </div>
+                      )}
+                      <p className="text-xs text-body-text">Sent {formatDate(invite.created_at, "MMM dd, yyyy HH:mm")}</p>
+                      {invite.status === "pending" && (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => updateInviteMutation.mutate({ inviteId: invite.invite_id, inviteStatus: "cancelled" })}
+                          disabled={updateInviteMutation.isLoading}
+                        >
+                          Cancel Invite
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
         {/* Messages Tab */}
         <TabsContent value="messages" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -906,7 +1119,53 @@ export default function CollaborationHub() {
         </TabsContent>
       </Tabs>
 
-      {/* Bus Pooling Request Dialog */}
+      {/* Request Pooling / Send Invite Dialog */}
+      <Dialog open={inviteDialogOpen} onOpenChange={setInviteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Request Pooling</DialogTitle>
+            <DialogDescription>
+              {inviteTargetTrip
+                ? `${inviteTargetTrip.origin_city} → ${inviteTargetTrip.destination_city} · ${inviteTargetTrip.agent_name || `Agent #${inviteTargetTrip.agent_id}`}`
+                : "Select a trip to pool with"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label htmlFor="invite-message">Message</Label>
+              <Textarea
+                id="invite-message"
+                placeholder="Describe the collaboration details, proposed arrangement, dates, etc."
+                value={inviteMessage}
+                onChange={(e) => setInviteMessage(e.target.value)}
+                rows={5}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInviteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={createInviteMutation.isLoading}
+              onClick={() => {
+                if (!inviteTargetTrip) return;
+                createInviteMutation.mutate({
+                  trip_id: inviteTargetTrip.trip_id,
+                  collaborating_identifier: String(inviteTargetTrip.agent_id),
+                  message: inviteMessage || null,
+                });
+              }}
+            >
+              {createInviteMutation.isLoading ? "Sending..." : "Send Invite"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bus Pooling Request Dialog (kept for agents who want to pool buses) */}
       <Dialog open={poolingDialogOpen} onOpenChange={setPoolingDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>

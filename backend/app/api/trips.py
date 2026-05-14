@@ -67,6 +67,8 @@ class TripResponse(BaseModel):
     source: str = "local"
     provider_id: Optional[str] = None
     external_ref: Optional[str] = None
+    # Collaboration
+    collaborator_count: int = 0
 
     class Config:
         from_attributes = True
@@ -428,6 +430,20 @@ def get_my_trips(
         trip_ids = [trip_row["trip_id"] for trip_row in result.data]
         images_map = _fetch_trip_images_map(supabase, trip_ids)
 
+        # Fetch accepted collaborator counts for all trips in one query
+        collab_counts: dict = {}
+        if trip_ids:
+            collab_res = (
+                supabase.table("trip_collaborators")
+                .select("trip_id")
+                .in_("trip_id", trip_ids)
+                .eq("status", "accepted")
+                .execute()
+            )
+            for row in collab_res.data or []:
+                tid = row["trip_id"]
+                collab_counts[tid] = collab_counts.get(tid, 0) + 1
+
         trips = []
         for trip_data in result.data:
             trip = TripResponse(
@@ -447,6 +463,7 @@ def get_my_trips(
                 is_tour_package=trip_data.get("is_tour_package"),
                 suitability=trip_data.get("suitability"),
                 image_gallery=images_map.get(trip_data["trip_id"], []),
+                collaborator_count=collab_counts.get(trip_data["trip_id"], 0),
             )
             trips.append(trip)
 
