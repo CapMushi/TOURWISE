@@ -230,6 +230,8 @@ def _local_booking_row_to_response(booking: dict, supabase) -> BookingResponse:
             "departure_time": trip["departure_time"],
             "arrival_time": trip["arrival_time"],
             "price": float(_resolve_unit_price(booking, trip)),
+            "member_trip_ids": trip.get("member_trip_ids") or [],
+            "is_tour_package": trip.get("is_tour_package", False),
         } if trip else None,
         agent_name=agent_name,
         booking_source="local",
@@ -456,7 +458,40 @@ async def create_booking(
             )
         
         trip = trip_result.data[0]
-        
+
+        # Trip bundle anchors: validate seats on every member leg before booking the anchor.
+        # When the anchor is later confirmed, member seats will be decremented atomically
+        # alongside the anchor (see member_trips list usage below).
+        member_trip_ids = trip.get("member_trip_ids") or []
+        member_trips: List[dict] = []
+        if member_trip_ids:
+            members_result = (
+                supabase.table("trips")
+                .select("*")
+                .in_("trip_id", member_trip_ids)
+                .execute()
+            )
+            member_trips = members_result.data or []
+            if len(member_trips) != len(member_trip_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Bundle is inconsistent: one or more member trips are missing.",
+                )
+            insufficient = [
+                m for m in member_trips
+                if (m.get("available_seats") or 0) < booking_data.number_of_seats
+            ]
+            if insufficient:
+                names = ", ".join(
+                    f"#{m['trip_id']} ({m['available_seats']} left)" for m in insufficient
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Bundle cannot be booked: insufficient seats on leg(s): {names}."
+                    ),
+                )
+
         # Validate available seats
         if trip["available_seats"] < booking_data.number_of_seats:
             raise HTTPException(
@@ -537,20 +572,41 @@ async def create_booking(
         }
         supabase.table("payments").insert(payment_data).execute()
         
-        # Update available seats on trip (decrement)
+        # Update available seats on trip (decrement). For bundle anchors we also
+        # decrement every member leg in sequence (best-effort transactional fan-out;
+        # Supabase REST does not expose explicit transactions, so we order writes
+        # so a mid-flight failure leaves seats over-counted rather than oversold).
+        if member_trip_ids:
+            for m in member_trips:
+                supabase.table("trips").update({
+                    "available_seats": (m.get("available_seats") or 0) - booking_data.number_of_seats
+                }).eq("trip_id", m["trip_id"]).execute()
         new_available_seats = trip["available_seats"] - booking_data.number_of_seats
         supabase.table("trips").update({
             "available_seats": new_available_seats
         }).eq("trip_id", booking_data.trip_id).execute()
-        
+
         # Notify traveler
+        if member_trip_ids:
+            route_summary = " → ".join(
+                [trip["origin_city"]] + [m["destination_city"] for m in member_trips]
+            )
+            traveler_message = (
+                f"Your tour package is confirmed — "
+                f"{route_summary}. Booking reference {booking_reference}."
+            )
+        else:
+            traveler_message = (
+                f"Your booking {booking_reference} for "
+                f"{trip['origin_city']} → {trip['destination_city']} has been confirmed."
+            )
         _create_booking_notification(
             supabase=supabase,
             booking_id=booking_id,
             user_id=user_id,
             notification_type="booking_confirmed",
-            title="Booking Confirmed",
-            message=f"Your booking {booking_reference} for {trip['origin_city']} -> {trip['destination_city']} has been confirmed.",
+            title="Tour Package Confirmed" if member_trip_ids else "Booking Confirmed",
+            message=traveler_message,
         )
 
         # Notify the travel agent that a new booking was made on their trip
@@ -559,17 +615,30 @@ async def create_booking(
         if agent_result.data:
             agent_user_id = agent_result.data[0]["user_id"]
             passenger_names_str = ", ".join([p.full_name for p in booking_data.passengers])
+            if member_trip_ids:
+                legs_summary = ", ".join(
+                    [f"{m['origin_city']}→{m['destination_city']}" for m in member_trips]
+                )
+                agent_message = (
+                    f"{booking_data.number_of_seats} seat(s) booked on your tour package "
+                    f"({legs_summary}) "
+                    f"(Ref: {booking_reference}). Passengers: {passenger_names_str}."
+                )
+                agent_title = "New Tour Package Booking"
+            else:
+                agent_message = (
+                    f"{booking_data.number_of_seats} seat(s) booked on your trip "
+                    f"{trip['origin_city']} → {trip['destination_city']} "
+                    f"(Ref: {booking_reference}). Passengers: {passenger_names_str}."
+                )
+                agent_title = "New Booking on Your Trip"
             _create_booking_notification(
                 supabase=supabase,
                 booking_id=booking_id,
                 user_id=agent_user_id,
                 notification_type="new_booking",
-                title="New Booking on Your Trip",
-                message=(
-                    f"{booking_data.number_of_seats} seat(s) booked on your trip "
-                    f"{trip['origin_city']} → {trip['destination_city']} "
-                    f"(Ref: {booking_reference}). Passengers: {passenger_names_str}."
-                ),
+                title=agent_title,
+                message=agent_message,
             )
         
         # Get agent name for response
@@ -600,6 +669,8 @@ async def create_booking(
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
                 "price": float(_resolve_unit_price(created_booking, trip)),
+                "member_trip_ids": trip.get("member_trip_ids") or [],
+                "is_tour_package": trip.get("is_tour_package", False),
             },
             agent_name=agent_name,
             booking_source="local",
@@ -768,6 +839,8 @@ async def get_booking_by_id(
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
                 "price": float(_resolve_unit_price(booking, trip)),
+                "member_trip_ids": trip.get("member_trip_ids") or [],
+                "is_tour_package": trip.get("is_tour_package", False),
             } if trip else None,
             agent_name=agent_name,
             booking_source="local",
@@ -832,8 +905,20 @@ async def cancel_booking(
         }
         
         supabase.table("booking").update(update_data).eq("booking_id", booking_id).execute()
-        
-        # Update available seats (increment)
+
+        # Update available seats (increment) — for bundle anchors restore each member's seats too.
+        cancel_member_ids = trip.get("member_trip_ids") or []
+        if cancel_member_ids:
+            members_result = (
+                supabase.table("trips")
+                .select("trip_id, available_seats")
+                .in_("trip_id", cancel_member_ids)
+                .execute()
+            )
+            for m in members_result.data or []:
+                supabase.table("trips").update({
+                    "available_seats": (m.get("available_seats") or 0) + booking["number_of_seats"]
+                }).eq("trip_id", m["trip_id"]).execute()
         new_available_seats = trip["available_seats"] + booking["number_of_seats"]
         supabase.table("trips").update({
             "available_seats": new_available_seats
@@ -895,6 +980,8 @@ async def cancel_booking(
                 "departure_time": trip["departure_time"],
                 "arrival_time": trip["arrival_time"],
                 "price": float(_resolve_unit_price(updated_booking, trip)),
+                "member_trip_ids": trip.get("member_trip_ids") or [],
+                "is_tour_package": trip.get("is_tour_package", False),
             },
             agent_name=agent_name,
             booking_source="local",

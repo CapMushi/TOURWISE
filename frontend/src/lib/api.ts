@@ -47,6 +47,8 @@ export interface TripResponse {
   is_tour_package?: boolean;
   suitability?: string;
   image_gallery?: string[];
+  /** Ordered member trip_ids when this row is a bundle anchor; empty/undefined for regular trips. */
+  member_trip_ids?: number[];
   /** local = Supabase trips; external = integration layer (synthetic trip_id) */
   source?: "local" | "external";
   provider_id?: string | null;
@@ -474,6 +476,43 @@ export async function updateTrip(tripId: number, data: UpdateTripRequest): Promi
   return apiClient<TripResponse>(`/api/trips/${tripId}`, {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Trip Bundles (Phase 2) — see .cursor/rules/trip-bundles-plan.mdc
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a bundle (multi-leg Tour Package) anchored on a freshly-created
+ * `trips` row. Pass the member trip_ids in route order (leg 1 first).
+ */
+export async function createBundle(memberTripIds: number[]): Promise<TripResponse> {
+  return apiClient<TripResponse>("/api/trips/bundle", {
+    method: "POST",
+    body: JSON.stringify({ member_trip_ids: memberTripIds }),
+  });
+}
+
+/**
+ * Replace the member list of an existing bundle anchor (pre-booking edits only).
+ */
+export async function updateBundle(
+  anchorId: number,
+  memberTripIds: number[],
+): Promise<TripResponse> {
+  return apiClient<TripResponse>(`/api/trips/bundle/${anchorId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ member_trip_ids: memberTripIds }),
+  });
+}
+
+/**
+ * Fetch the ordered member trips of a bundle anchor. Returns `[]` for ordinary trips.
+ */
+export async function getBundleLegs(tripId: number): Promise<TripResponse[]> {
+  return apiClient<TripResponse[]>(`/api/trips/${tripId}/legs`, {
+    method: "GET",
   });
 }
 
@@ -965,6 +1004,8 @@ export interface BookingResponse {
     departure_time: string;
     arrival_time: string;
     price: number;
+    member_trip_ids?: number[];
+    is_tour_package?: boolean;
   };
   agent_name?: string;
   /** local = public.booking; external = public.external_bookings */

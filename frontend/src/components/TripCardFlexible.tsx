@@ -48,8 +48,13 @@ export function TripCardFlexible({
 
   const transportIcon = transportIcons[trip.transport_type.toLowerCase()] || <Bus className="h-4 w-4" />;
   const resources = getTripResources(trip.trip_id);
+  const memberCount = trip.member_trip_ids?.length ?? 0;
+  const isBundle = memberCount >= 2;
   const isTourPackage =
-    Boolean(trip.is_tour_package) || resources.buses.length > 0 || resources.hotels.length > 0;
+    Boolean(trip.is_tour_package) ||
+    isBundle ||
+    resources.buses.length > 0 ||
+    resources.hotels.length > 0;
   const isExternal = trip.source === "external";
   const seatsLeft = trip.available_seats;
   const isAlmostFull = seatsLeft > 0 && seatsLeft <= Math.max(3, Math.ceil(trip.total_seats * 0.2));
@@ -117,6 +122,11 @@ export function TripCardFlexible({
           <p className="text-sm text-body-text">
             {trip.destination_province}
           </p>
+          {isBundle && (
+            <p className="mt-1 text-xs font-medium text-amber-700">
+              A {memberCount}-stop guided journey
+            </p>
+          )}
         </div>
 
         {/* Details Grid */}

@@ -29,7 +29,13 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { getMyBookings, cancelBooking, type BookingResponse } from "@/lib/api";
+import {
+  cancelBooking,
+  getBundleLegs,
+  getMyBookings,
+  type BookingResponse,
+  type TripResponse,
+} from "@/lib/api";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { formatPkr } from "@/lib/currency";
@@ -249,6 +255,11 @@ export default function MyBookings() {
                           Partner trip
                         </Badge>
                       )}
+                      {(booking.trip?.member_trip_ids?.length ?? 0) >= 2 && (
+                        <Badge className="ml-2 bg-amber-500 text-white">
+                          Tour Package · {booking.trip!.member_trip_ids!.length} stops
+                        </Badge>
+                      )}
                     </CardDescription>
                   </div>
                   {getStatusBadge(booking.status)}
@@ -334,6 +345,10 @@ export default function MyBookings() {
                       )}
                     </AlertDescription>
                   </Alert>
+                )}
+
+                {(booking.trip?.member_trip_ids?.length ?? 0) >= 2 && (
+                  <BundleLegsPanel anchorTripId={booking.trip!.trip_id} />
                 )}
 
                 <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
@@ -540,6 +555,57 @@ export default function MyBookings() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * Inline expandable list of the member trips for a bundle anchor booking.
+ * Lazily fetches the legs via `getBundleLegs` and renders origin/destination,
+ * times, and per-leg price.
+ */
+function BundleLegsPanel({ anchorTripId }: { anchorTripId: number }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const { data: legs = [], isLoading } = useQuery<TripResponse[]>({
+    queryKey: ["bundle-legs-mybookings", anchorTripId],
+    queryFn: () => getBundleLegs(anchorTripId),
+    enabled: expanded,
+    staleTime: 60_000,
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-background/40 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-heading">Your itinerary</p>
+        <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Hide stops" : "Show stops"}
+        </Button>
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-2">
+          {isLoading && <Skeleton className="h-16 w-full" />}
+          {!isLoading && legs.length === 0 && (
+            <p className="text-xs text-body-text">This tour package has no stops to show yet.</p>
+          )}
+          {legs.map((leg, idx) => (
+            <div
+              key={leg.trip_id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background/60 p-3 text-sm"
+            >
+              <div>
+                <p className="font-medium text-heading">
+                  Stop {idx + 1} · {leg.origin_city} → {leg.destination_city}
+                </p>
+                <p className="text-xs text-body-text">
+                  {format(new Date(leg.departure_time), "EEE, MMM d · h:mm a")}
+                </p>
+              </div>
+              <Badge variant="outline">{formatPkr(leg.price)}</Badge>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
