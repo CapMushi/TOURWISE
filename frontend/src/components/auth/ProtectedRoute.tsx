@@ -23,7 +23,7 @@ export const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) 
   }
 
   if (requiredRole === "admin" && !isAdmin) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace state={{ adminAccessDenied: true }} />;
   }
 
   if (requiredRole === "agent") {

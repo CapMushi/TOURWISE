@@ -13,10 +13,12 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle, signOut, user, loading, isAdmin } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, user, loading } = useAuth();
 
   const [isSignup, setIsSignup] = useState(false);
-  const [isAdminView, setIsAdminView] = useState(false);
+  const [isAdminView, setIsAdminView] = useState(
+    !!(location.state as { adminAccessDenied?: boolean } | null)?.adminAccessDenied
+  );
   const [selectedRole, setSelectedRole] = useState<"traveler" | "agent" | null>(null);
   const [role, setRole] = useState<"traveler" | "agent">("traveler");
   const [email, setEmail] = useState("");
@@ -89,6 +91,16 @@ export default function Login() {
     await signInWithGoogle();
   };
 
+  // Show error when ProtectedRoute rejected admin access
+  useEffect(() => {
+    const state = location.state as { adminAccessDenied?: boolean } | null;
+    if (state?.adminAccessDenied) {
+      setError("This Google account does not have admin access.");
+      // Clear the state so a refresh doesn't re-show the error
+      window.history.replaceState({}, "", location.pathname);
+    }
+  }, []);
+
   // Handle OAuth callback redirect
   useEffect(() => {
     if (!loading && user) {
@@ -111,14 +123,9 @@ export default function Login() {
           localStorage.removeItem("pendingOAuthMode");
 
           if (pendingMode === "admin") {
-            if (!isAdmin) {
-              await signOut();
-              setIsAdminView(true);
-              setSelectedRole(null);
-              setError("This Google account does not have admin access.");
-              return;
-            }
-
+            // Navigate to /admin and let ProtectedRoute decide.
+            // Checking isAdmin here is unsafe — role state may still be
+            // loading when this effect fires, causing false rejections.
             navigate(pendingTargetPath || "/admin", { replace: true });
             return;
           }
@@ -140,7 +147,7 @@ export default function Login() {
         void handleOAuthRedirect();
       }
     }
-  }, [user, loading, navigate, location, isAdmin, signOut]);
+  }, [user, loading, navigate, location]);
 
   // Show role selection cards for login (not signup, not admin)
   if (!selectedRole && !isSignup && !isAdminView) {
