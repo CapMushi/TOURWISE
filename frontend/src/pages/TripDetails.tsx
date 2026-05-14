@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { AlertCircle, Check, MapPin, Calendar, Users, Banknote, Heart, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
+import { GoogleMapFromAddress } from "@/components/maps/GoogleMapFromAddress";
 
 export default function TripDetails() {
   const navigate = useNavigate();
