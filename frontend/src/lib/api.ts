@@ -64,16 +64,68 @@ export interface SkipVerificationResponse {
   agent_id: number;
 }
 
+export type AppRole = "traveler" | "agent" | "admin";
+
+export interface CurrentUserContextResponse {
+  id: string;
+  email?: string | null;
+  claims?: Record<string, unknown>;
+  is_admin: boolean;
+  is_agent: boolean;
+  agent_id?: number | null;
+  agent_verification_status?: string | null;
+  app_role: AppRole;
+}
+
 // Register as Agent Response
 export interface RegisterAsAgentResponse {
   message: string;
   agent_id: number;
 }
 
+export interface AdminDashboardActivity {
+  id: string;
+  text: string;
+  created_at: string;
+  time: string;
+  activity_type: "agent_request" | "trip_created" | "booking_created";
+}
+
+export interface AdminDashboardResponse {
+  stats: {
+    total_users: number;
+    pending_verifications: number;
+    active_trips: number;
+  };
+  recent_activity: AdminDashboardActivity[];
+}
+
+export interface AdminManagedAgent {
+  agent_id: number;
+  user_id: string;
+  name: string;
+  email?: string | null;
+  verification_status?: string | null;
+  created_at?: string | null;
+  rating?: number | null;
+  numberofreviews: number;
+  total_trips: number;
+}
+
+export interface AdminAgentDirectoryResponse {
+  pending: AdminManagedAgent[];
+  active: AdminManagedAgent[];
+}
+
 // Trip List Response
 export interface TripListResponse {
   trips: TripResponse[];
   total: number;
+  page: number;
+  page_size?: number | null;
+  total_pages: number;
+  has_next_page: boolean;
+  has_previous_page: boolean;
 }
 
 export interface RecommendationsResponse {
@@ -114,6 +166,12 @@ export interface TripSearchFilters {
   departure_date_to?: string; // ISO 8601 datetime string
   min_available_seats?: number;
   suitability?: string;
+}
+
+export interface TripListOptions {
+  page?: number;
+  pageSize?: number;
+  sortBy?: "recommended" | "departure-soonest" | "price-low-high" | "price-high-low" | "availability";
 }
 
 /**
@@ -238,34 +296,99 @@ export async function skipAgentVerification(): Promise<SkipVerificationResponse>
   });
 }
 
+export async function getAdminDashboard(): Promise<AdminDashboardResponse> {
+  return apiClient<AdminDashboardResponse>("/api/admin/dashboard", {
+    method: "GET",
+  });
+}
+
+export async function getAdminAgents(): Promise<AdminAgentDirectoryResponse> {
+  return apiClient<AdminAgentDirectoryResponse>("/api/admin/agents", {
+    method: "GET",
+  });
+}
+
+export async function reviewAgentVerification(
+  agentId: number,
+  decision: "approved" | "rejected"
+): Promise<{ message: string; agent_id: number; verification_status: string }> {
+  return apiClient<{ message: string; agent_id: number; verification_status: string }>(
+    `/api/admin/agents/${agentId}/verification`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ decision }),
+    }
+  );
+}
+
+export async function getCurrentUserContext(): Promise<CurrentUserContextResponse> {
+  return apiClient<CurrentUserContextResponse>("/api/me", {
+    method: "GET",
+  });
+}
+
+export async function getCurrentUserContextWithToken(
+  token: string
+): Promise<CurrentUserContextResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/me`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (response.status === 204) {
+    return {} as CurrentUserContextResponse;
+  }
+
+  const contentType = response.headers.get("content-type");
+  if (!contentType?.includes("application/json")) {
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return {} as CurrentUserContextResponse;
+  }
+
+  const data = (await response.json()) as CurrentUserContextResponse | ApiError;
+  if (!response.ok) {
+    const errorMessage =
+      "detail" in data && typeof data.detail === "string"
+        ? data.detail
+        : `API error: ${response.statusText}`;
+    throw new Error(errorMessage);
+  }
+
+  return data as CurrentUserContextResponse;
+}
+
 /**
  * Get all trips with optional search filters
  * If filters is undefined or empty, returns all trips ordered by trip_id
  */
-export async function getTrips(filters?: TripSearchFilters): Promise<TripListResponse> {
-  // If no filters provided, just call the endpoint without query params
-  if (!filters || Object.keys(filters).length === 0) {
-    return apiClient<TripListResponse>("/api/trips", {
-      method: "GET",
-    });
-  }
-
+export async function getTrips(
+  filters?: TripSearchFilters,
+  options?: TripListOptions
+): Promise<TripListResponse> {
   const params = new URLSearchParams();
-  
-  if (filters.destination_province) params.append("destination_province", filters.destination_province);
-  if (filters.destination_city) params.append("destination_city", filters.destination_city);
-  if (filters.origin_city) params.append("origin_city", filters.origin_city);
-  if (filters.transport_type) params.append("transport_type", filters.transport_type);
-  if (filters.price_min !== undefined) params.append("price_min", filters.price_min.toString());
-  if (filters.price_max !== undefined) params.append("price_max", filters.price_max.toString());
-  if (filters.departure_date_from) params.append("departure_date_from", filters.departure_date_from);
-  if (filters.departure_date_to) params.append("departure_date_to", filters.departure_date_to);
-  if (filters.min_available_seats !== undefined) params.append("min_available_seats", filters.min_available_seats.toString());
-  if (filters.suitability) params.append("suitability", filters.suitability);
-  
+
+  if (filters?.destination_province) params.append("destination_province", filters.destination_province);
+  if (filters?.destination_city) params.append("destination_city", filters.destination_city);
+  if (filters?.origin_city) params.append("origin_city", filters.origin_city);
+  if (filters?.transport_type) params.append("transport_type", filters.transport_type);
+  if (filters?.price_min !== undefined) params.append("price_min", filters.price_min.toString());
+  if (filters?.price_max !== undefined) params.append("price_max", filters.price_max.toString());
+  if (filters?.departure_date_from) params.append("departure_date_from", filters.departure_date_from);
+  if (filters?.departure_date_to) params.append("departure_date_to", filters.departure_date_to);
+  if (filters?.min_available_seats !== undefined) params.append("min_available_seats", filters.min_available_seats.toString());
+  if (filters?.suitability) params.append("suitability", filters.suitability);
+  if (options?.sortBy) params.append("sort_by", options.sortBy);
+  if (options?.page !== undefined) params.append("page", options.page.toString());
+  if (options?.pageSize !== undefined) params.append("page_size", options.pageSize.toString());
+
   const queryString = params.toString();
   const endpoint = `/api/trips${queryString ? `?${queryString}` : ""}`;
-  
+
   return apiClient<TripListResponse>(endpoint, {
     method: "GET",
   });
@@ -452,8 +575,25 @@ export interface BookingNotificationItem {
   created_at: string;
 }
 
-export async function getMyBookingNotifications(): Promise<BookingNotificationItem[]> {
-  return apiClient<BookingNotificationItem[]>("/api/notifications", { method: "GET" });
+export interface BookingNotificationListResponse {
+  notifications: BookingNotificationItem[];
+  total: number;
+  unread_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next_page: boolean;
+  has_previous_page: boolean;
+}
+
+export async function getMyBookingNotifications(
+  page: number = 1,
+  pageSize: number = 10
+): Promise<BookingNotificationListResponse> {
+  return apiClient<BookingNotificationListResponse>(
+    `/api/notifications?page=${page}&page_size=${pageSize}`,
+    { method: "GET" }
+  );
 }
 
 export async function markBookingNotificationRead(
@@ -566,6 +706,40 @@ export async function getMyReviewForAgent(agentId: number): Promise<MyAgentRevie
   return apiClient<MyAgentReview | null>(`/api/reviews/agents/${agentId}/my-review`, { method: "GET" });
 }
 
+export interface TripReviewItem {
+  review_id: number;
+  trip_id: number;
+  user_id: string;
+  username?: string | null;
+  rating: number;
+  comment?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface UpsertTripReviewRequest {
+  rating: number;
+  comment?: string;
+}
+
+export async function getTripReviews(tripId: number): Promise<TripReviewItem[]> {
+  return apiClient<TripReviewItem[]>(`/api/reviews/trips/${tripId}/reviews`, { method: "GET" });
+}
+
+export async function getMyReviewForTrip(tripId: number): Promise<TripReviewItem | null> {
+  return apiClient<TripReviewItem | null>(`/api/reviews/trips/${tripId}/my-review`, { method: "GET" });
+}
+
+export async function upsertTripReview(
+  tripId: number,
+  payload: UpsertTripReviewRequest
+): Promise<TripReviewItem> {
+  return apiClient<TripReviewItem>(`/api/reviews/trips/${tripId}/reviews`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // Agent profile (agent's own view)
 export interface AgentProfileData {
   agent_id: number;
@@ -586,8 +760,40 @@ export interface AgentProfileUpdate {
   profile_details?: Record<string, unknown>;
 }
 
+export interface AgentDashboardStats {
+  total_revenue: number;
+  total_bookings: number;
+  active_listings: number;
+  pending_inquiries: number;
+}
+
+export interface AgentDashboardChartPoint {
+  month: string;
+  bookings: number;
+}
+
+export interface AgentDashboardRecentBooking {
+  booking_id: number;
+  booking_reference: string;
+  booking_date: string;
+  status: string;
+  trip_label: string;
+  traveler_name: string;
+  total_price: number;
+}
+
+export interface AgentDashboardResponse {
+  stats: AgentDashboardStats;
+  bookings_by_month: AgentDashboardChartPoint[];
+  recent_bookings: AgentDashboardRecentBooking[];
+}
+
 export async function getAgentProfile(): Promise<AgentProfileData> {
   return apiClient<AgentProfileData>("/api/profile/agent", { method: "GET" });
+}
+
+export async function getAgentDashboard(): Promise<AgentDashboardResponse> {
+  return apiClient<AgentDashboardResponse>("/api/profile/agent/dashboard", { method: "GET" });
 }
 
 export async function updateAgentProfile(payload: AgentProfileUpdate): Promise<AgentProfileData> {
@@ -645,6 +851,8 @@ export async function getAgentTripPassengers(): Promise<TripWithPassengers[]> {
  */
 const tripImagesBucket =
   (import.meta.env.VITE_SUPABASE_TRIP_IMAGES_BUCKET as string | undefined)?.trim() || "trip-images";
+const profileImagesBucket =
+  (import.meta.env.VITE_SUPABASE_PROFILE_IMAGES_BUCKET as string | undefined)?.trim() || "profile-images";
 
 export async function uploadTripImage(file: File, tripId: number): Promise<string> {
   const fileExt = file.name.split('.').pop();
@@ -667,6 +875,37 @@ export async function uploadTripImage(file: File, tripId: number): Promise<strin
   const {
     data: { publicUrl },
   } = supabase.storage.from(tripImagesBucket).getPublicUrl(data.path);
+
+  return publicUrl;
+}
+
+/**
+ * Upload profile image to Supabase Storage
+ */
+export async function uploadProfileImage(
+  file: File,
+  ownerId: string,
+  folder: "traveler" | "agent" = "traveler"
+): Promise<string> {
+  const fileExt = file.name.split(".").pop();
+  const fileName = `${folder}/${ownerId}-${Date.now()}.${fileExt}`;
+
+  const { data, error } = await supabase.storage.from(profileImagesBucket).upload(fileName, file, {
+    cacheControl: "3600",
+    upsert: true,
+  });
+
+  if (error) {
+    const hint =
+      error.message?.toLowerCase().includes("bucket") || error.message?.toLowerCase().includes("not found")
+        ? ` Create a public bucket named "${profileImagesBucket}" in Supabase Storage or add the SQL from backend/supabase/storage_profile_images_bucket.sql.`
+        : "";
+    throw new Error(`Failed to upload profile image: ${error.message}.${hint}`);
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(profileImagesBucket).getPublicUrl(data.path);
 
   return publicUrl;
 }
@@ -732,6 +971,16 @@ export interface BookingResponse {
   booking_source?: "local" | "external";
 }
 
+export interface BookingListResponse {
+  bookings: BookingResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next_page: boolean;
+  has_previous_page: boolean;
+}
+
 /**
  * Create a new booking
  */
@@ -745,12 +994,20 @@ export async function createBooking(data: CreateBookingRequest): Promise<Booking
 /**
  * Get all bookings for the current user
  */
-export async function getMyBookings(statusFilter?: string): Promise<BookingResponse[]> {
-  const endpoint = statusFilter
-    ? `/api/bookings?status_filter=${statusFilter}`
-    : "/api/bookings";
+export async function getMyBookings(
+  statusFilter?: string,
+  page: number = 1,
+  pageSize: number = 6
+): Promise<BookingListResponse> {
+  const params = new URLSearchParams();
+  if (statusFilter) {
+    params.append("status_filter", statusFilter);
+  }
+  params.append("page", String(page));
+  params.append("page_size", String(pageSize));
+  const endpoint = `/api/bookings?${params.toString()}`;
   
-  return apiClient<BookingResponse[]>(endpoint, {
+  return apiClient<BookingListResponse>(endpoint, {
     method: "GET",
   });
 }

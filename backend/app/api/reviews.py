@@ -38,6 +38,22 @@ class UpsertAgentReviewRequest(BaseModel):
     comment: Optional[str] = Field(None, max_length=2000)
 
 
+class TripReview(BaseModel):
+    review_id: int
+    trip_id: int
+    user_id: str
+    username: Optional[str] = None
+    rating: Decimal
+    comment: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class UpsertTripReviewRequest(BaseModel):
+    rating: Decimal = Field(..., ge=1, le=5)
+    comment: Optional[str] = Field(None, max_length=2000)
+
+
 @router.get("/agents", response_model=List[AgentReviewableItem])
 async def list_agents_for_reviews(
     current_user: dict = Depends(get_current_user),
@@ -280,4 +296,220 @@ async def upsert_agent_review(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error saving review: {message}",
+        )
+
+
+@router.get("/trips/{trip_id}/my-review")
+async def get_my_review_for_trip(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    user_id = current_user["id"]
+    try:
+        trip_res = supabase.table("trips").select("trip_id").eq("trip_id", trip_id).limit(1).execute()
+        if not trip_res.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+        res = (
+            supabase.table("trip_reviews")
+            .select("*")
+            .eq("trip_id", trip_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return None
+        row = res.data[0]
+        return {
+            "review_id": row["review_id"],
+            "trip_id": row["trip_id"],
+            "rating": float(row["rating"]),
+            "comment": row.get("comment"),
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching your trip review: {str(e)}",
+        )
+
+
+@router.get("/trips/{trip_id}/reviews", response_model=List[TripReview])
+async def list_reviews_for_trip(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    _ = current_user["id"]
+    try:
+        trip_res = supabase.table("trips").select("trip_id").eq("trip_id", trip_id).limit(1).execute()
+        if not trip_res.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+        reviews_res = (
+            supabase.table("trip_reviews")
+            .select("*")
+            .eq("trip_id", trip_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = reviews_res.data or []
+        if not rows:
+            return []
+
+        user_ids = list({row["user_id"] for row in rows if row.get("user_id")})
+        username_map: dict[str, str] = {}
+        if user_ids:
+            profile_res = (
+                supabase.table("profiles")
+                .select("id, username")
+                .in_("id", user_ids)
+                .execute()
+            )
+            for profile in profile_res.data or []:
+                username_map[profile["id"]] = profile.get("username") or "Traveler"
+
+        return [
+            TripReview(
+                review_id=row["review_id"],
+                trip_id=row["trip_id"],
+                user_id=row["user_id"],
+                username=username_map.get(row["user_id"]),
+                rating=Decimal(str(row["rating"])),
+                comment=row.get("comment"),
+                created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
+                updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+                if row.get("updated_at")
+                else None,
+            )
+            for row in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching trip reviews: {str(e)}",
+        )
+
+
+@router.post("/trips/{trip_id}/reviews", response_model=TripReview)
+async def upsert_trip_review(
+    trip_id: int,
+    payload: UpsertTripReviewRequest,
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    user_id = current_user["id"]
+    try:
+        trip_res = (
+            supabase.table("trips")
+            .select("trip_id, agent_id")
+            .eq("trip_id", trip_id)
+            .limit(1)
+            .execute()
+        )
+        if not trip_res.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+        trip_row = trip_res.data[0]
+
+        owner_res = (
+            supabase.table("travel_agent")
+            .select("agent_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if owner_res.data and owner_res.data[0]["agent_id"] == trip_row["agent_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot review your own trip",
+            )
+
+        booking_res = (
+            supabase.table("booking")
+            .select("booking_id")
+            .eq("trip_id", trip_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not booking_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only review trips you have booked",
+            )
+
+        existing = (
+            supabase.table("trip_reviews")
+            .select("*")
+            .eq("trip_id", trip_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+
+        now_iso = datetime.utcnow().isoformat()
+        if existing.data:
+            updated = (
+                supabase.table("trip_reviews")
+                .update(
+                    {
+                        "rating": float(payload.rating),
+                        "comment": payload.comment,
+                        "updated_at": now_iso,
+                    }
+                )
+                .eq("review_id", existing.data[0]["review_id"])
+                .execute()
+            )
+            row = updated.data[0]
+        else:
+            created = (
+                supabase.table("trip_reviews")
+                .insert(
+                    {
+                        "trip_id": trip_id,
+                        "agent_id": trip_row["agent_id"],
+                        "user_id": user_id,
+                        "rating": float(payload.rating),
+                        "comment": payload.comment,
+                        "updated_at": now_iso,
+                    }
+                )
+                .execute()
+            )
+            row = created.data[0]
+
+        profile = supabase.table("profiles").select("username").eq("id", user_id).limit(1).execute()
+        username = profile.data[0].get("username") if profile.data else None
+
+        return TripReview(
+            review_id=row["review_id"],
+            trip_id=row["trip_id"],
+            user_id=row["user_id"],
+            username=username,
+            rating=Decimal(str(row["rating"])),
+            comment=row.get("comment"),
+            created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
+            updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+            if row.get("updated_at")
+            else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        message = str(e)
+        if "trip_reviews" in message.lower():
+            message = (
+                "trip_reviews table not found. Run backend/supabase/trip_reviews_phase1.sql first."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error saving trip review: {message}",
         )

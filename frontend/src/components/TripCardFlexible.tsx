@@ -50,6 +50,11 @@ export function TripCardFlexible({
   const resources = getTripResources(trip.trip_id);
   const isTourPackage =
     Boolean(trip.is_tour_package) || resources.buses.length > 0 || resources.hotels.length > 0;
+  const isExternal = trip.source === "external";
+  const seatsLeft = trip.available_seats;
+  const isAlmostFull = seatsLeft > 0 && seatsLeft <= Math.max(3, Math.ceil(trip.total_seats * 0.2));
+  const suitabilityLabel =
+    trip.suitability && trip.suitability !== "Any" ? `Best for ${trip.suitability}` : null;
 
   return (
     <div
@@ -70,16 +75,31 @@ export function TripCardFlexible({
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
         <div className="absolute top-3 right-3">
-          {variant === "agent" && getStatusBadge()}
+          {getStatusBadge()}
         </div>
-        {isTourPackage && (
-          <div className="absolute top-3 left-3">
+        <div className="absolute top-3 left-3 flex flex-col gap-2">
+          {isExternal && (
+            <Badge className="bg-sky-600 text-white border-0">
+              Partner Trip
+            </Badge>
+          )}
+          {isTourPackage && (
             <Badge className="bg-amber-500 text-white border-0">
               <Star className="h-3 w-3 mr-1 fill-white" />
               Tour Package
             </Badge>
-          </div>
-        )}
+          )}
+          {isAlmostFull && (
+            <Badge className="bg-orange-500 text-white border-0">
+              Only {seatsLeft} left
+            </Badge>
+          )}
+          {suitabilityLabel && (
+            <Badge className="bg-white/90 text-heading border-0">
+              {suitabilityLabel}
+            </Badge>
+          )}
+        </div>
         <div className="absolute bottom-3 left-3 right-3">
           <div className="flex items-center gap-2 text-white bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-full text-sm">
             {transportIcon}
@@ -117,6 +137,23 @@ export function TripCardFlexible({
               <span className="font-medium text-heading">{trip.agent_name}</span>
             </div>
           )}
+          <p className="text-xs text-body-text">
+            {isExternal
+              ? "Partner listing with fulfillment handled by the provider."
+              : "Listed by a TourWise travel agent and bookable inside TourWise."}
+          </p>
+          {variant === "traveler" && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Badge variant="outline">
+                {trip.available_seats === 0
+                  ? "Sold out"
+                  : isAlmostFull
+                    ? `Hurry: ${seatsLeft} seats left`
+                    : "Seats available"}
+              </Badge>
+              {isExternal && <Badge variant="outline">Booked via partner</Badge>}
+            </div>
+          )}
         </div>
 
         {/* Seats and Price */}
@@ -144,7 +181,7 @@ export function TripCardFlexible({
             onClick?.();
           }}
         >
-          {variant === "agent" ? "Manage Details" : "View Details"}
+          {variant === "agent" ? "Manage Details" : "Review Trip Details"}
         </Button>
       </div>
     </div>

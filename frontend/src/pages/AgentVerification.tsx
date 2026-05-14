@@ -2,15 +2,16 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { skipAgentVerification } from "@/lib/api";
+import { registerAsAgent } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function AgentVerification() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, session, loading } = useAuth();
+  const { user, session, loading, isAgent, agentVerificationStatus } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [requestSubmitted, setRequestSubmitted] = useState(false);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -20,12 +21,21 @@ export default function AgentVerification() {
     }
   }, [user, loading, navigate]);
 
-  const handleSkipVerification = async () => {
+  useEffect(() => {
+    if (agentVerificationStatus === "approved") {
+      navigate("/agent", { replace: true });
+    }
+    if (isAgent && agentVerificationStatus === "pending") {
+      setRequestSubmitted(true);
+    }
+  }, [agentVerificationStatus, isAgent, navigate]);
+
+  const handleRequestVerification = async () => {
     // Double-check authentication before proceeding
     if (!user || !session) {
       toast({
         title: "Not Authenticated",
-        description: "Please log in to skip verification.",
+        description: "Please log in to request verification.",
         variant: "destructive",
       });
       navigate("/login");
@@ -34,26 +44,21 @@ export default function AgentVerification() {
 
     setIsProcessing(true);
     try {
-      console.log("[AgentVerification] Attempting to skip verification");
-      console.log("[AgentVerification] User ID:", user.id);
-      console.log("[AgentVerification] Has session:", !!session);
-      
-      await skipAgentVerification();
+      await registerAsAgent();
+      setRequestSubmitted(true);
       toast({
-        title: "Verification Skipped",
-        description: "You have been verified as a travel agent. Redirecting to dashboard...",
+        title: "Verification Request Submitted",
+        description: "Your travel agent request is now pending admin approval.",
       });
-      // Redirect to agent dashboard after a short delay
-      setTimeout(() => {
-        navigate("/agent");
-      }, 1500);
+      setRequestSubmitted(true);
     } catch (error) {
-      console.error("Error skipping verification:", error);
+      console.error("Error requesting verification:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to skip verification",
+        description: error instanceof Error ? error.message : "Failed to submit verification request",
         variant: "destructive",
       });
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -84,15 +89,26 @@ export default function AgentVerification() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-body-text">
-            We will contact you via email to complete your agent verification process.
+            Travel agent access is reviewed manually. Submit your request and an admin will approve it before you can manage trips.
           </p>
+          {isAgent && agentVerificationStatus === "pending" && (
+            <p className="text-sm text-muted-foreground">
+              Your verification request has already been submitted and is waiting for admin review.
+            </p>
+          )}
           <Button
-            onClick={handleSkipVerification}
-            disabled={isProcessing || !user || !session}
-            variant="outline"
+            onClick={handleRequestVerification}
+            disabled={isProcessing || !user || !session || requestSubmitted}
             className="w-full"
           >
-            {isProcessing ? "Processing..." : "Skip Verification (Testing Only)"}
+            {isProcessing
+              ? "Submitting..."
+              : requestSubmitted
+                ? "Request Submitted"
+                : "Request Agent Verification"}
+          </Button>
+          <Button variant="outline" className="w-full" onClick={() => navigate("/")}>
+            Back to home
           </Button>
         </CardContent>
       </Card>

@@ -8,11 +8,12 @@ import { Plane, Shield } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabaseClient";
 import { updateUserProfile } from "@/lib/api";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle, user, loading } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, signOut, user, loading, isAdmin } = useAuth();
 
   const [isSignup, setIsSignup] = useState(false);
   const [isAdminView, setIsAdminView] = useState(false);
@@ -24,15 +25,20 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const getPostLoginPath = () => {
+    const state = location.state as { from?: Location } | undefined;
+    if (state?.from?.pathname) {
+      return state.from.pathname;
+    }
+    if (isAdminView) {
+      return "/admin";
+    }
+    return role === "agent" ? "/agent" : "/";
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-
-    if (isAdminView) {
-      // TODO: wire real admin auth later
-      navigate("/admin");
-      return;
-    }
 
     setSubmitting(true);
 
@@ -64,15 +70,7 @@ export default function Login() {
           return;
         }
 
-        // Redirect to previous location if available, otherwise based on role selection
-        const state = location.state as { from?: Location } | undefined;
-        if (state?.from) {
-          navigate(state.from.pathname, { replace: true });
-        } else if (role === "agent") {
-          navigate("/agent");
-        } else {
-          navigate("/");
-        }
+        navigate(getPostLoginPath(), { replace: true });
       }
     } finally {
       setSubmitting(false);
@@ -81,10 +79,13 @@ export default function Login() {
 
   const handleGoogleSignIn = async () => {
     setError(null);
-    // Save role to localStorage before OAuth redirect
     const roleToSave = selectedRole || role;
-    localStorage.setItem('pendingOAuthRole', roleToSave);
+    const targetPath = getPostLoginPath();
+
+    localStorage.setItem("pendingOAuthRole", roleToSave);
     localStorage.setItem('isOAuthLogin', 'true');
+    localStorage.setItem("pendingOAuthTargetPath", targetPath);
+    localStorage.setItem("pendingOAuthMode", isAdminView ? "admin" : roleToSave);
     await signInWithGoogle();
   };
 
@@ -93,42 +94,61 @@ export default function Login() {
     if (!loading && user) {
       const oauthPending = localStorage.getItem('isOAuthLogin');
       const pendingRole = localStorage.getItem('pendingOAuthRole');
+      const pendingTargetPath = localStorage.getItem("pendingOAuthTargetPath");
+      const pendingMode = localStorage.getItem("pendingOAuthMode");
       
       if (oauthPending === 'true') {
-        // Check if this is a new user (created within last 30 seconds for reliability)
-        const userCreatedAt = new Date(user.created_at);
-        const now = new Date();
-        const timeDiff = now.getTime() - userCreatedAt.getTime();
-        const isNewUser = timeDiff < 30000; // 30 seconds window
-        
-        // Clear OAuth flag
-        localStorage.removeItem('isOAuthLogin');
-        
-        if (isNewUser) {
-          // New user - always redirect to role selection (same as email signup)
-          localStorage.removeItem('pendingOAuthRole');
-          navigate('/role-selection', { replace: true });
-        } else {
-          // Returning user - redirect based on role
-          const state = location.state as { from?: Location } | undefined;
-          if (state?.from) {
-            navigate(state.from.pathname, { replace: true });
+        const handleOAuthRedirect = async () => {
+          // Check if this is a new user (created within last 30 seconds for reliability)
+          const userCreatedAt = new Date(user.created_at);
+          const now = new Date();
+          const timeDiff = now.getTime() - userCreatedAt.getTime();
+          const isNewUser = timeDiff < 30000;
+
+          localStorage.removeItem("isOAuthLogin");
+          localStorage.removeItem("pendingOAuthRole");
+          localStorage.removeItem("pendingOAuthTargetPath");
+          localStorage.removeItem("pendingOAuthMode");
+
+          if (pendingMode === "admin") {
+            if (!isAdmin) {
+              await signOut();
+              setIsAdminView(true);
+              setSelectedRole(null);
+              setError("This Google account does not have admin access.");
+              return;
+            }
+
+            navigate(pendingTargetPath || "/admin", { replace: true });
+            return;
+          }
+
+          if (isNewUser) {
+            navigate('/role-selection', { replace: true });
+            return;
+          }
+
+          if (pendingTargetPath) {
+            navigate(pendingTargetPath, { replace: true });
           } else if (pendingRole === 'agent') {
             navigate('/agent', { replace: true });
-            localStorage.removeItem('pendingOAuthRole');
           } else {
             navigate('/', { replace: true });
-            localStorage.removeItem('pendingOAuthRole');
           }
-        }
+        };
+
+        void handleOAuthRedirect();
       }
     }
-  }, [user, loading, navigate, location]);
+  }, [user, loading, navigate, location, isAdmin, signOut]);
 
   // Show role selection cards for login (not signup, not admin)
   if (!selectedRole && !isSignup && !isAdminView) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="relative min-h-screen flex items-center justify-center p-4">
+        <div className="absolute right-4 top-4">
+          <ThemeToggle />
+        </div>
         <div className="w-full max-w-2xl space-y-4">
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-2 mb-4">
@@ -193,7 +213,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="glass-panel w-full max-w-md p-8 space-y-6 animate-scale-in">
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -270,16 +293,14 @@ export default function Login() {
                   : "Login"}
           </Button>
 
-          {!isAdminView && (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogleSignIn}
-            >
-              Continue with Google
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handleGoogleSignIn}
+          >
+            {isAdminView ? "Continue with Google Admin Account" : "Continue with Google"}
+          </Button>
 
           {!isAdminView && (
             <div className="text-center text-sm space-y-2">

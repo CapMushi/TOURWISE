@@ -17,6 +17,7 @@ import {
   Banknote,
   FileText,
   X,
+  Eye,
 } from "lucide-react";
 import {
   Dialog,
@@ -32,6 +33,8 @@ import { getMyBookings, cancelBooking, type BookingResponse } from "@/lib/api";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { formatPkr } from "@/lib/currency";
+
+const PAGE_SIZE = 6;
 
 // Safe date formatter
 const formatDate = (dateString: string | undefined | null, formatStr: string = "MMM dd, yyyy HH:mm"): string => {
@@ -51,12 +54,15 @@ export default function MyBookings() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<BookingResponse | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const { data: bookings, isLoading, error } = useQuery({
-    queryKey: ["my-bookings", statusFilter],
-    queryFn: () => getMyBookings(statusFilter === "all" ? undefined : statusFilter),
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["my-bookings", statusFilter, currentPage],
+    queryFn: () =>
+      getMyBookings(statusFilter === "all" ? undefined : statusFilter, currentPage, PAGE_SIZE),
   });
 
   const cancelMutation = useMutation({
@@ -93,6 +99,11 @@ export default function MyBookings() {
     }
     setSelectedBooking(booking);
     setCancelDialogOpen(true);
+  };
+
+  const handleViewDetails = (booking: BookingResponse) => {
+    setSelectedBooking(booking);
+    setDetailsDialogOpen(true);
   };
 
   const handleCancelConfirm = () => {
@@ -158,42 +169,52 @@ export default function MyBookings() {
     );
   }
 
-  const filteredBookings = bookings || [];
+  const filteredBookings = data?.bookings || [];
+  const visibleCurrentPage = data?.page ?? currentPage;
+  const totalPages = data?.total_pages ?? 1;
+  const startPage = Math.max(1, visibleCurrentPage - 2);
+  const endPage = Math.min(totalPages, visibleCurrentPage + 2);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, idx) => startPage + idx);
+
+  const handleStatusFilterChange = (nextStatus: string) => {
+    setStatusFilter(nextStatus);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-4xl font-heading font-bold text-heading">My Bookings</h1>
-        {filteredBookings.length > 0 && (
+        {(data?.total ?? 0) > 0 && (
           <p className="text-body-text">
-            {filteredBookings.length} {filteredBookings.length === 1 ? "booking" : "bookings"}
+            {data?.total ?? 0} {(data?.total ?? 0) === 1 ? "booking" : "bookings"}
           </p>
         )}
       </div>
 
       {/* Status Filter */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button
           variant={statusFilter === "all" ? "default" : "outline"}
-          onClick={() => setStatusFilter("all")}
+          onClick={() => handleStatusFilterChange("all")}
         >
           All
         </Button>
         <Button
           variant={statusFilter === "confirmed" ? "default" : "outline"}
-          onClick={() => setStatusFilter("confirmed")}
+          onClick={() => handleStatusFilterChange("confirmed")}
         >
           Confirmed
         </Button>
         <Button
           variant={statusFilter === "completed" ? "default" : "outline"}
-          onClick={() => setStatusFilter("completed")}
+          onClick={() => handleStatusFilterChange("completed")}
         >
           Completed
         </Button>
         <Button
           variant={statusFilter === "cancelled" ? "default" : "outline"}
-          onClick={() => setStatusFilter("cancelled")}
+          onClick={() => handleStatusFilterChange("cancelled")}
         >
           Cancelled
         </Button>
@@ -315,7 +336,14 @@ export default function MyBookings() {
                   </Alert>
                 )}
 
-                <div className="flex gap-2 pt-4 border-t border-border">
+                <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleViewDetails(booking)}
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    Booking Details
+                  </Button>
                   <Button
                     variant="outline"
                     onClick={() => navigate(`/trip/${booking.trip_id}`)}
@@ -336,6 +364,39 @@ export default function MyBookings() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-body-text">
+            Page {visibleCurrentPage} of {totalPages}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setCurrentPage(visibleCurrentPage - 1)}
+              disabled={!data?.has_previous_page}
+            >
+              Previous
+            </Button>
+            {pageNumbers.map((pageNumber) => (
+              <Button
+                key={pageNumber}
+                variant={pageNumber === visibleCurrentPage ? "default" : "outline"}
+                onClick={() => setCurrentPage(pageNumber)}
+              >
+                {pageNumber}
+              </Button>
+            ))}
+            <Button
+              variant="outline"
+              onClick={() => setCurrentPage(visibleCurrentPage + 1)}
+              disabled={!data?.has_next_page}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 
@@ -386,6 +447,97 @@ export default function MyBookings() {
               {cancelMutation.isPending ? "Cancelling..." : "Cancel Booking"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Booking Details</DialogTitle>
+            <DialogDescription>
+              {selectedBooking?.booking_reference
+                ? `Reference: ${selectedBooking.booking_reference}`
+                : "Review the full booking summary."}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedBooking && (
+            <div className="space-y-5">
+              <div className="rounded-xl border border-border bg-background/50 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-lg font-semibold text-heading">
+                      {selectedBooking.trip?.origin_city} → {selectedBooking.trip?.destination_city}
+                    </p>
+                    <p className="text-sm text-body-text">
+                      Organized by {selectedBooking.agent_name || "TourWise Partner"}
+                    </p>
+                  </div>
+                  {getStatusBadge(selectedBooking.status)}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Booking date</p>
+                  <p className="font-medium">{formatDate(selectedBooking.booking_date)}</p>
+                </div>
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Trip date</p>
+                  <p className="font-medium">
+                    {selectedBooking.trip ? formatDate(selectedBooking.trip.departure_time) : "N/A"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Contact email</p>
+                  <p className="font-medium break-all">{selectedBooking.contact_email}</p>
+                </div>
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Contact phone</p>
+                  <p className="font-medium">{selectedBooking.contact_phone}</p>
+                </div>
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Seats booked</p>
+                  <p className="font-medium">{selectedBooking.number_of_seats}</p>
+                </div>
+                <div className="rounded-xl border border-border p-4">
+                  <p className="text-sm text-muted-foreground">Total paid</p>
+                  <p className="font-medium">{formatPkr(selectedBooking.total_price)}</p>
+                </div>
+              </div>
+
+              {selectedBooking.passenger_names?.length > 0 && (
+                <div className="rounded-xl border border-border p-4">
+                  <p className="mb-3 font-medium text-heading">Passengers</p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedBooking.passenger_names.map((name, index) => (
+                      <Badge key={`${name}-${index}`} variant="outline">
+                        {name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedBooking.special_requests && (
+                <div className="rounded-xl border border-border p-4">
+                  <p className="mb-2 font-medium text-heading">Special requests</p>
+                  <p className="text-sm text-body-text">{selectedBooking.special_requests}</p>
+                </div>
+              )}
+
+              {selectedBooking.cancellation_reason && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {selectedBooking.cancellation_reason}
+                    {selectedBooking.refund_amount && (
+                      <span className="mt-1 block">Refund amount: {formatPkr(selectedBooking.refund_amount)}</span>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

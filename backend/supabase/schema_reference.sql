@@ -10,8 +10,11 @@
 -- Runnable snippets in this folder:
 --   add_trips_image_url.sql      — trips.image_url
 --   storage_trip_images_bucket.sql — Storage bucket for uploads
+--   storage_profile_images_bucket.sql — Storage bucket for traveler/agent avatars
+--   admin_roles_phase1.sql — Admin role tables and initial assignment
 --   optional_profiles_trigger.sql — optional profile bootstrap
 --   external_integrations_phase1.sql — external SIL tables (bookings, passengers, payments, snapshots)
+--   trip_reviews_phase1.sql — traveler reviews for booked trips
 -- =============================================================================
 
 
@@ -21,24 +24,35 @@
 -- id (uuid, PK)           — select, insert minimal { id }; update never from code
 -- username                — select, update
 -- preferences (jsonb)     — select, update
--- profile_details (jsonb) — select, update
+-- profile_details (jsonb) — select, update (e.g. avatar_url)
 -- updated_at              — select (DB may maintain)
 
 
 -- -----------------------------------------------------------------------------
--- travel_agent  (auth.py, trips.py, bookings.py, collaboration.py)
+-- travel_agent  (auth.py, profile.py, trips.py, bookings.py, collaboration.py)
 -- -----------------------------------------------------------------------------
 -- agent_id (bigint, PK)
 -- user_id (uuid, FK → profiles.id)
 -- name, email
 -- verification_status     — insert/update (e.g. pending, approved)
--- contact_info, profile_details (jsonb) — insert null on register
+-- contact_info, profile_details (jsonb) — insert null on register; profile_details may contain avatar_url, bio
 -- rating, numberofreviews — select (e.g. /api/me agent card)
 -- created_at              — select as returned by DB
 
 
 -- -----------------------------------------------------------------------------
--- trips  (trips.py, bookings.py, collaboration.py, favorites.py)
+-- admin_roles, user_admin_roles  (admin.py, auth.py via role checks)
+-- -----------------------------------------------------------------------------
+-- admin_roles.role_id (bigint/int, PK)
+-- admin_roles.role_name, description, created_at
+--   common role_name values in current schema: super_admin, support_admin, content_admin, finance_admin
+-- user_admin_roles.user_id (uuid, FK → profiles.id)
+-- user_admin_roles.role_id (FK → admin_roles.role_id)
+-- user_admin_roles.assigned_by, assigned_at
+
+
+-- -----------------------------------------------------------------------------
+-- trips  (profile.py, trips.py, bookings.py, collaboration.py, favorites.py)
 -- -----------------------------------------------------------------------------
 -- trip_id (bigint, PK)
 -- agent_id (bigint, FK → travel_agent.agent_id)
@@ -65,7 +79,7 @@
 
 
 -- -----------------------------------------------------------------------------
--- booking  (bookings.py)
+-- booking  (profile.py, bookings.py)
 -- -----------------------------------------------------------------------------
 -- booking_id (bigint, PK)
 -- user_id (uuid), trip_id (bigint), itinerary_id (bigint, null)
@@ -95,6 +109,17 @@
 -- -----------------------------------------------------------------------------
 -- review_id (bigint, PK)
 -- agent_id (bigint, FK → travel_agent)
+-- user_id (uuid, FK → profiles.id)
+-- rating, comment
+-- created_at, updated_at
+
+
+-- -----------------------------------------------------------------------------
+-- trip_reviews  (reviews.py)
+-- -----------------------------------------------------------------------------
+-- review_id (bigint, PK)
+-- trip_id (bigint, FK → trips.trip_id)
+-- agent_id (bigint, FK → travel_agent.agent_id, nullable snapshot/helper)
 -- user_id (uuid, FK → profiles.id)
 -- rating, comment
 -- created_at, updated_at
@@ -185,7 +210,7 @@
 
 
 -- -----------------------------------------------------------------------------
--- bus_pooling_requests  (collaboration.py)
+-- bus_pooling_requests  (profile.py, collaboration.py)
 -- -----------------------------------------------------------------------------
 -- request_id (bigint, PK)
 -- requester_agent_id, target_agent_id (FK → travel_agent)
@@ -196,7 +221,7 @@
 
 
 -- -----------------------------------------------------------------------------
--- agent_messages  (collaboration.py)
+-- agent_messages  (profile.py, collaboration.py)
 -- -----------------------------------------------------------------------------
 -- message_id (bigint, PK)
 -- sender_agent_id, receiver_agent_id (FK → travel_agent)

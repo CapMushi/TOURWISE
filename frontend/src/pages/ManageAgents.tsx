@@ -1,46 +1,41 @@
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle, XCircle, Ban } from "lucide-react";
+import { CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
-
-const pendingAgents = [
-  { id: 1, name: "Sarah Williams", email: "sarah@travelco.com", dateApplied: "2025-11-25" },
-  { id: 2, name: "Michael Chen", email: "michael@wanderlust.com", dateApplied: "2025-11-26" },
-  { id: 3, name: "Emma Thompson", email: "emma@globetreks.com", dateApplied: "2025-11-27" },
-];
-
-const activeAgents = [
-  { id: 1, name: "TravelCo Adventures", totalTrips: 15, rating: 4.8, status: "Active" },
-  { id: 2, name: "Wanderlust Travels", totalTrips: 22, rating: 4.9, status: "Active" },
-  { id: 3, name: "Globe Treks", totalTrips: 8, rating: 4.5, status: "Active" },
-  { id: 4, name: "Journey Makers", totalTrips: 31, rating: 4.7, status: "Active" },
-];
+import { getAdminAgents, reviewAgentVerification } from "@/lib/api";
 
 export default function ManageAgents() {
   const navigate = useNavigate();
-  const [pending, setPending] = useState(pendingAgents);
-  const [active, setActive] = useState(activeAgents);
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["admin-agents"],
+    queryFn: getAdminAgents,
+    refetchInterval: 30_000,
+  });
 
-  const handleApprove = (id: number) => {
-    setPending(pending.filter(agent => agent.id !== id));
-    toast.success("Agent approved successfully");
-  };
+  const decisionMutation = useMutation({
+    mutationFn: ({ agentId, decision }: { agentId: number; decision: "approved" | "rejected" }) =>
+      reviewAgentVerification(agentId, decision),
+    onSuccess: (response) => {
+      toast.success(response.message);
+      void queryClient.invalidateQueries({ queryKey: ["admin-agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (mutationError) => {
+      toast.error(mutationError instanceof Error ? mutationError.message : "Failed to update agent status");
+    },
+  });
 
-  const handleReject = (id: number) => {
-    setPending(pending.filter(agent => agent.id !== id));
-    toast.success("Agent application rejected");
-  };
+  const pendingAgents = data?.pending ?? [];
+  const activeAgents = data?.active ?? [];
 
-  const handleSuspend = (id: number) => {
-    setActive(active.map(agent => 
-      agent.id === id ? { ...agent, status: "Suspended" } : agent
-    ));
-    toast.success("Agent suspended");
-  };
+  const formatDateApplied = (value?: string | null) =>
+    value ? format(new Date(value), "MMM d, yyyy") : "Unknown";
 
   return (
     <div className="p-8 space-y-8">
@@ -69,23 +64,38 @@ export default function ManageAgents() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pending.length === 0 ? (
+                    {isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                          Loading pending applications...
+                        </TableCell>
+                      </TableRow>
+                    ) : isError ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-destructive py-8">
+                          {error instanceof Error ? error.message : "Failed to load pending applications"}
+                        </TableCell>
+                      </TableRow>
+                    ) : pendingAgents.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                           No pending applications
                         </TableCell>
                       </TableRow>
                     ) : (
-                      pending.map((agent) => (
-                        <TableRow key={agent.id}>
+                      pendingAgents.map((agent) => (
+                        <TableRow key={agent.agent_id}>
                           <TableCell className="font-medium">{agent.name}</TableCell>
-                          <TableCell>{agent.email}</TableCell>
-                          <TableCell>{agent.dateApplied}</TableCell>
+                          <TableCell>{agent.email ?? "No email"}</TableCell>
+                          <TableCell>{formatDateApplied(agent.created_at)}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
                               <Button
                                 size="sm"
-                                onClick={() => handleApprove(agent.id)}
+                                onClick={() =>
+                                  decisionMutation.mutate({ agentId: agent.agent_id, decision: "approved" })
+                                }
+                                disabled={decisionMutation.isPending}
                                 className="bg-green-600 hover:bg-green-700"
                               >
                                 <CheckCircle className="h-4 w-4 mr-1" />
@@ -94,7 +104,10 @@ export default function ManageAgents() {
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => handleReject(agent.id)}
+                                onClick={() =>
+                                  decisionMutation.mutate({ agentId: agent.agent_id, decision: "rejected" })
+                                }
+                                disabled={decisionMutation.isPending}
                               >
                                 <XCircle className="h-4 w-4 mr-1" />
                                 Reject
@@ -122,35 +135,45 @@ export default function ManageAgents() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                  {active.map((agent) => (
-                      <TableRow key={agent.id}>
+                    {isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          Loading active agents...
+                        </TableCell>
+                      </TableRow>
+                    ) : isError ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-destructive py-8">
+                          {error instanceof Error ? error.message : "Failed to load active agents"}
+                        </TableCell>
+                      </TableRow>
+                    ) : activeAgents.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          No approved agents yet
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      activeAgents.map((agent) => (
+                      <TableRow key={agent.agent_id}>
                         <TableCell 
                           className="font-medium text-primary hover:underline cursor-pointer"
-                          onClick={() => navigate(`/admin/agent-profile/${agent.id}`)}
+                          onClick={() => navigate(`/admin/agent-profile/${agent.agent_id}`)}
                         >
                           {agent.name}
                         </TableCell>
                         <TableCell>{agent.totalTrips}</TableCell>
-                        <TableCell>{agent.rating} ⭐</TableCell>
+                        <TableCell>{agent.rating != null ? `${agent.rating.toFixed(1)} ⭐` : "No rating"}</TableCell>
                         <TableCell>
-                          <span className={agent.status === "Active" ? "text-green-600" : "text-red-600"}>
-                            {agent.status}
+                          <span className="text-green-600 capitalize">
+                            {agent.verification_status ?? "approved"}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right">
-                          {agent.status === "Active" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleSuspend(agent.id)}
-                            >
-                              <Ban className="h-4 w-4 mr-1" />
-                              Suspend
-                            </Button>
-                          )}
+                        <TableCell className="text-right text-sm text-muted-foreground">
+                          Admin-approved
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )))}
                   </TableBody>
                 </Table>
               </div>

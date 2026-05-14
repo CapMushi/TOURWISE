@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { Bell, CheckCheck } from "lucide-react";
@@ -11,14 +12,17 @@ import {
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
+const PAGE_SIZE = 10;
+
 export default function TravelerNotifications() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const { data: items = [], isLoading, error } = useQuery({
-    queryKey: ["traveler-notifications"],
-    queryFn: getMyBookingNotifications,
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["traveler-notifications", currentPage],
+    queryFn: () => getMyBookingNotifications(currentPage, PAGE_SIZE),
   });
 
   const markReadMutation = useMutation({
@@ -42,7 +46,13 @@ export default function TravelerNotifications() {
     },
   });
 
-  const unreadCount = items.filter((n) => !n.is_read).length;
+  const items = data?.notifications ?? [];
+  const unreadCount = data?.unread_count ?? 0;
+  const visibleCurrentPage = data?.page ?? currentPage;
+  const totalPages = data?.total_pages ?? 1;
+  const startPage = Math.max(1, visibleCurrentPage - 2);
+  const endPage = Math.min(totalPages, visibleCurrentPage + 2);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, idx) => startPage + idx);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -68,6 +78,21 @@ export default function TravelerNotifications() {
       </div>
 
       <div className="glass-card p-6 space-y-2">
+        {!isLoading && !error && (
+          <div className="mb-4 rounded-xl border border-border/60 bg-background/40 p-4">
+            <p className="text-sm text-body-text">
+              {unreadCount > 0
+                ? `You have ${unreadCount} unread ${unreadCount === 1 ? "notification" : "notifications"}.`
+                : "You're all caught up. New booking updates will show up here."}
+            </p>
+            {(data?.total ?? 0) > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Showing {items.length} of {data?.total} notifications.
+              </p>
+            )}
+          </div>
+        )}
+
         {isLoading && (
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
@@ -83,9 +108,12 @@ export default function TravelerNotifications() {
         )}
 
         {!isLoading && !error && items.length === 0 && (
-          <p className="text-body-text text-center py-12">
-            No notifications yet. When you book or cancel a trip, updates will appear here.
-          </p>
+          <div className="py-12 text-center">
+            <Bell className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+            <p className="text-body-text">
+              No notifications yet. When you book or cancel a trip, updates will appear here.
+            </p>
+          </div>
         )}
 
         {!isLoading &&
@@ -124,6 +152,39 @@ export default function TravelerNotifications() {
               </div>
             </div>
           ))}
+
+        {totalPages > 1 && (
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-body-text">
+              Page {visibleCurrentPage} of {totalPages}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setCurrentPage(visibleCurrentPage - 1)}
+                disabled={!data?.has_previous_page}
+              >
+                Previous
+              </Button>
+              {pageNumbers.map((pageNumber) => (
+                <Button
+                  key={pageNumber}
+                  variant={pageNumber === visibleCurrentPage ? "default" : "outline"}
+                  onClick={() => setCurrentPage(pageNumber)}
+                >
+                  {pageNumber}
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                onClick={() => setCurrentPage(visibleCurrentPage + 1)}
+                disabled={!data?.has_next_page}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

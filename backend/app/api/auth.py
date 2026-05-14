@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import List, Optional
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_user_role_flags
 from app.services.supabase_client import get_supabase_client
 
 
@@ -70,56 +70,12 @@ async def register_as_agent(current_user: dict = Depends(get_current_user)):
 @router.post("/skip-verification", response_model=SkipVerificationResponse)
 async def skip_verification(current_user: dict = Depends(get_current_user)):
     """
-    Skip agent verification (testing only).
-    Creates or updates travel_agent record with verified status.
+    Legacy testing endpoint kept disabled for safety.
     """
-    supabase = get_supabase_client()
-    user_id = current_user["id"]
-    email = current_user.get("email", "")
-    
-    # Extract username from email (part before @)
-    username = email.split("@")[0] if email else "agent"
-    
-    # Check if travel_agent record already exists
-    existing_agent = supabase.table("travel_agent").select("agent_id").eq("user_id", user_id).execute()
-    
-    # Common enum values for verification_status: 'pending', 'approved', 'active', 'rejected', 'verified'
-    # Try 'approved' first as it's the most common alternative to 'verified'
-    verification_status = "approved"
-    
-    if existing_agent.data:
-        # Update existing record
-        agent_id = existing_agent.data[0]["agent_id"]
-        result = supabase.table("travel_agent").update({
-            "verification_status": verification_status
-        }).eq("agent_id", agent_id).execute()
-        
-        return SkipVerificationResponse(
-            message=f"Agent verification status updated to {verification_status}",
-            agent_id=agent_id
-        )
-    else:
-        # Create new travel_agent record
-        new_agent = supabase.table("travel_agent").insert({
-            "user_id": user_id,
-            "name": username,
-            "email": email,
-            "verification_status": verification_status,
-            "contact_info": None,
-            "profile_details": None
-        }).execute()
-        
-        if not new_agent.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create travel agent record"
-            )
-        
-        agent_id = new_agent.data[0]["agent_id"]
-        return SkipVerificationResponse(
-            message=f"Travel agent approved successfully (status: {verification_status})",
-            agent_id=agent_id
-        )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Self-service agent verification is disabled. An admin must review and approve agent requests.",
+    )
 
 
 @router.get("/me")
@@ -127,7 +83,11 @@ async def read_me(current_user=Depends(get_current_user)):
   """
   Return information about the currently authenticated user based on the Supabase JWT.
   """
-  return current_user
+  supabase = get_supabase_client()
+  return {
+      **current_user,
+      **get_user_role_flags(supabase, current_user["id"]),
+  }
 
 
 class AgentResponse(BaseModel):

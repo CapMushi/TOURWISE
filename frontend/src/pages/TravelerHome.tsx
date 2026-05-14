@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getRecommendations, getTopAgents, getTrips } from "@/lib/api";
 import { splitHomeTrips } from "@/lib/tripSections";
-import { Search, Calendar as CalendarIcon, MapPin, Banknote, Bus, Users, Heart } from "lucide-react";
+import { Search, Calendar as CalendarIcon, MapPin, Banknote, Bus, Users, Heart, ShieldCheck, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,19 @@ import { Footer } from "@/components/layout/Footer";
 import { PRICE_INPUT_PREFIX_LABEL } from "@/lib/currency";
 import { Skeleton } from "@/components/ui/skeleton";
 import heroImage from "@/assets/hero-tropical.jpg";
+import fairyMeadowsHero from "@/assets/traveler-hero-fairy-meadows.png";
+import mohenjoDaroHero from "@/assets/traveler-hero-mohenjo-daro.png";
+import saifUlMalookHero from "@/assets/traveler-hero-saif-ul-malook.png";
+
+const HERO_SLIDE_INTERVAL_MS = 5000;
+
+const heroSlides = [
+  { src: heroImage, alt: "Beautiful tropical paradise" },
+  { src: fairyMeadowsHero, alt: "Fairy Meadows with snow-covered mountains" },
+  { src: saifUlMalookHero, alt: "Saif-ul-Malook lake surrounded by green mountains" },
+  { src: mohenjoDaroHero, alt: "Historic ruins at Mohenjo-daro" },
+];
+
 export default function TravelerHome() {
   const navigate = useNavigate();
   const [province, setProvince] = useState("");
@@ -28,6 +41,7 @@ export default function TravelerHome() {
   const [transportType, setTransportType] = useState("Any");
   const [travelers, setTravelers] = useState("2");
   const [suitability, setSuitability] = useState("Any");
+  const [activeHeroIndex, setActiveHeroIndex] = useState(0);
 
   const { data: topAgentsData, isLoading: agentsLoading } = useQuery({
     queryKey: ["top-agents"],
@@ -49,6 +63,23 @@ export default function TravelerHome() {
     recommendationsData?.trips && recommendationsData.trips.length > 0
       ? recommendationsData.trips
       : fallbackRecommendations;
+  const liveTripCount = tripsData?.total ?? tripsData?.trips.length ?? 0;
+  const destinationCount = new Set(
+    (tripsData?.trips ?? []).map((trip) => `${trip.destination_city}-${trip.destination_province}`)
+  ).size;
+  const ratedAgentCount = topAgentsData?.agents.length ?? 0;
+
+  useEffect(() => {
+    if (heroSlides.length < 2) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setActiveHeroIndex((currentIndex) => (currentIndex + 1) % heroSlides.length);
+    }, HERO_SLIDE_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,11 +124,17 @@ export default function TravelerHome() {
       {/* Hero Section */}
       <section className="relative h-[600px] overflow-hidden">
         <div className="absolute inset-0">
-          <img 
-            src={heroImage} 
-            alt="Beautiful tropical paradise" 
-            className="w-full h-full object-cover"
-          />
+          {heroSlides.map((slide, index) => (
+            <img
+              key={`${slide.alt}-${index}`}
+              src={slide.src}
+              alt={slide.alt}
+              className={cn(
+                "absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out",
+                index === activeHeroIndex ? "opacity-100" : "opacity-0"
+              )}
+            />
+          ))}
           <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/30 to-transparent" />
         </div>
         
@@ -105,6 +142,10 @@ export default function TravelerHome() {
           <h1 className="text-5xl md:text-6xl font-heading font-bold text-white text-center mb-8 animate-fade-in">
             Where to next?
           </h1>
+          <p className="mb-8 max-w-3xl text-center text-lg text-white/90">
+            Compare live listings, review travel agent profiles, and book with clearer expectations before
+            you commit.
+          </p>
 
           <form onSubmit={handleSearch} className="glass-panel p-6 w-full max-w-6xl animate-scale-in">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -317,15 +358,70 @@ export default function TravelerHome() {
               Search Trips
             </Button>
           </form>
+
+          {heroSlides.length > 1 && (
+            <div className="mt-6 flex items-center gap-2">
+              {heroSlides.map((_, index) => (
+                <button
+                  key={`hero-slide-dot-${index}`}
+                  type="button"
+                  aria-label={`Show traveler hero slide ${index + 1}`}
+                  onClick={() => setActiveHeroIndex(index)}
+                  className={cn(
+                    "h-2.5 rounded-full transition-all duration-300",
+                    index === activeHeroIndex ? "w-8 bg-white" : "w-2.5 bg-white/50 hover:bg-white/75"
+                  )}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
       <div className="max-w-7xl mx-auto px-4 py-12 space-y-16">
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="glass-card p-6">
+            <div className="mb-3 flex items-center gap-3">
+              <ShieldCheck className="h-5 w-5 text-primary" />
+              <p className="font-heading font-semibold text-heading">Live listings</p>
+            </div>
+            <p className="text-3xl font-heading font-bold text-heading">{liveTripCount}</p>
+            <p className="mt-2 text-sm text-body-text">
+              Search results now load page by page, so you can browse faster without pulling the full catalog
+              at once.
+            </p>
+          </div>
+          <div className="glass-card p-6">
+            <div className="mb-3 flex items-center gap-3">
+              <MapPin className="h-5 w-5 text-primary" />
+              <p className="font-heading font-semibold text-heading">Destinations to compare</p>
+            </div>
+            <p className="text-3xl font-heading font-bold text-heading">{destinationCount}</p>
+            <p className="mt-2 text-sm text-body-text">
+              Browse different routes, departure windows, and suitability tags before narrowing to one trip.
+            </p>
+          </div>
+          <div className="glass-card p-6">
+            <div className="mb-3 flex items-center gap-3">
+              <Star className="h-5 w-5 text-primary" />
+              <p className="font-heading font-semibold text-heading">Rated travel agents</p>
+            </div>
+            <p className="text-3xl font-heading font-bold text-heading">{ratedAgentCount}</p>
+            <p className="mt-2 text-sm text-body-text">
+              Check agent profiles, review counts, and active listings before you decide who to book with.
+            </p>
+          </div>
+        </section>
+
         {/* AI Recommendations (live trips: soonest departures with availability) */}
         <section>
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             AI-Powered Recommendations For You
           </h2>
+          <p className="mb-4 max-w-3xl text-sm text-body-text">
+            These suggestions are built from live trip availability and ranking logic, then shown with the
+            same listing details you can verify yourself.
+          </p>
           {recommendationsData?.summary && (
             <div className="glass-card p-4 mb-4 text-sm text-body-text">
               {recommendationsData.summary}
@@ -359,6 +455,9 @@ export default function TravelerHome() {
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             Trending Destinations
           </h2>
+          <p className="mb-4 max-w-3xl text-sm text-body-text">
+            Fresh listings travelers are likely to compare right now, based on recently published inventory.
+          </p>
           {tripsLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[1, 2, 3, 4].map((i) => (
@@ -387,6 +486,9 @@ export default function TravelerHome() {
           <h2 className="text-3xl font-heading font-bold text-heading mb-6">
             Top Rated Travel Agents
           </h2>
+          <p className="mb-4 max-w-3xl text-sm text-body-text">
+            Open an agent profile to review their ratings, recent feedback, and live trips before you book.
+          </p>
           {agentsLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
               {[1, 2, 3, 4].map((i) => (
@@ -397,7 +499,14 @@ export default function TravelerHome() {
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
               {topAgentsData.agents.map((agent) => (
                 <div key={agent.agent_id} className="glass-card p-6 text-center space-y-3">
-                  <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-primary to-secondary" />
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-primary to-secondary text-2xl font-heading font-bold text-white">
+                    {agent.name
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((part) => part[0]?.toUpperCase())
+                      .join("") || "TW"}
+                  </div>
                   <h3 className="font-heading font-semibold text-heading">{agent.name}</h3>
                   <div className="flex items-center justify-center gap-1 text-sm">
                     <span className="text-2xl">⭐</span>
@@ -410,7 +519,15 @@ export default function TravelerHome() {
                       </span>
                     )}
                   </div>
-                  <Button variant="outline" size="sm" className="w-full">
+                  <p className="text-xs text-body-text">
+                    Browse profile details, traveler reviews, and current listings before booking.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => navigate(`/agents/${agent.agent_id}`)}
+                  >
                     View Profile
                   </Button>
                 </div>

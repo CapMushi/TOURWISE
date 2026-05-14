@@ -40,19 +40,22 @@ import ExploreTrips from "./pages/ExploreTrips";
 import AgentReviews from "./pages/AgentReviews";
 import AgentProfile from "./pages/AgentProfile";
 import AgentPassengers from "./pages/AgentPassengers";
+import PublicAgentProfile from "./pages/PublicAgentProfile";
 import { AuthProvider } from "./contexts/AuthContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
+    <ThemeProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/role-selection" element={<RoleSelection />} />
             <Route path="/questionnaire" element={<TravelerQuestionnaire />} />
@@ -178,9 +181,19 @@ const App = () => (
               }
             />
             <Route
-              path="/agent"
+              path="/agents/:agentId"
               element={
                 <ProtectedRoute>
+                  <AppLayout userRole="traveler">
+                    <PublicAgentProfile />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent"
+              element={
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <AgentDashboard />
                   </AppLayout>
@@ -190,7 +203,7 @@ const App = () => (
             <Route
               path="/agent/notifications"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <AgentNotifications />
                   </AppLayout>
@@ -200,7 +213,7 @@ const App = () => (
             <Route
               path="/agent/manage-trips"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <ManageTrips />
                   </AppLayout>
@@ -210,7 +223,7 @@ const App = () => (
             <Route
               path="/agent/add-trip"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <AddTrip />
                   </AppLayout>
@@ -220,7 +233,7 @@ const App = () => (
             <Route
               path="/agent/manage-details/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <ManageDetails />
                   </AppLayout>
@@ -230,7 +243,7 @@ const App = () => (
             <Route
               path="/agent/resource-inventory"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <ResourceInventory />
                   </AppLayout>
@@ -240,7 +253,7 @@ const App = () => (
             <Route
               path="/agent/collaboration"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <CollaborationHub />
                   </AppLayout>
@@ -250,7 +263,7 @@ const App = () => (
             <Route
               path="/agent/profile"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <AgentProfile />
                   </AppLayout>
@@ -260,7 +273,7 @@ const App = () => (
             <Route
               path="/agent/passengers"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="agent">
                   <AppLayout userRole="agent">
                     <AgentPassengers />
                   </AppLayout>
@@ -270,7 +283,7 @@ const App = () => (
             <Route
               path="/admin"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <AdminDashboard />
                   </AppLayout>
@@ -280,7 +293,7 @@ const App = () => (
             <Route
               path="/admin/trip-approvals"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <TripApprovals />
                   </AppLayout>
@@ -290,7 +303,7 @@ const App = () => (
             <Route
               path="/admin/trip-review/:tripId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <AdminTripView />
                   </AppLayout>
@@ -300,7 +313,7 @@ const App = () => (
             <Route
               path="/admin/manage-users"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <ManageUsers />
                   </AppLayout>
@@ -310,7 +323,7 @@ const App = () => (
             <Route
               path="/admin/manage-agents"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <ManageAgents />
                   </AppLayout>
@@ -320,7 +333,7 @@ const App = () => (
             <Route
               path="/admin/manage-travelers"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <ManageTravelers />
                   </AppLayout>
@@ -330,7 +343,7 @@ const App = () => (
             <Route
               path="/admin/traveler-profile/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <TravelerProfileDetail />
                   </AppLayout>
@@ -340,7 +353,7 @@ const App = () => (
             <Route
               path="/admin/agent-profile/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <AgentProfileDetail />
                   </AppLayout>
@@ -350,7 +363,7 @@ const App = () => (
             <Route
               path="/admin/moderation"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <ModerationQueue />
                   </AppLayout>
@@ -360,7 +373,7 @@ const App = () => (
             <Route
               path="/admin/settings"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredRole="admin">
                   <AppLayout userRole="admin">
                     <AdminSettings />
                   </AppLayout>
@@ -369,10 +382,11 @@ const App = () => (
             />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

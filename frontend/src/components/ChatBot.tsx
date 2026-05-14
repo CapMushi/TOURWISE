@@ -11,7 +11,10 @@ export function ChatBot() {
   const [messages, setMessages] = useState<
     Array<{ role: "user" | "assistant"; content: string; sources?: Array<{ title?: string; similarity?: number }> }>
   >([
-    { role: "assistant", content: "Hi! I'm your TourWise AI Assistant. How can I help you today?" }
+    {
+      role: "assistant",
+      content: "Hi! I'm your TourWise assistant. I can help with trips, bookings, agents, and general platform questions.",
+    }
   ]);
 
   const chatMutation = useMutation({
@@ -62,7 +65,7 @@ export function ChatBot() {
       </button>
 
       {isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-96 h-[500px] glass-panel flex flex-col animate-scale-in">
+        <div className="fixed bottom-24 right-3 z-50 h-[70vh] w-[calc(100vw-1.5rem)] max-w-md glass-panel flex flex-col animate-scale-in sm:right-6 sm:h-[500px] sm:w-96">
           <div className="p-4 border-b border-white/20">
             <h3 className="font-heading font-semibold text-heading">TourWise AI Assistant</h3>
           </div>
@@ -74,7 +77,7 @@ export function ChatBot() {
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                  className={`max-w-[80%] whitespace-pre-wrap rounded-lg px-4 py-2 leading-relaxed ${
                     msg.role === "user"
                       ? "bg-primary text-primary-foreground"
                       : "bg-white/40 text-heading backdrop-blur-sm"
@@ -85,7 +88,7 @@ export function ChatBot() {
                     <div className="mt-2 pt-2 border-t border-white/30 text-xs opacity-80 space-y-1">
                       {msg.sources.slice(0, 2).map((s, sIdx) => (
                         <div key={sIdx}>
-                          Source: {s.title || "Knowledge Base"}{" "}
+                          Helpful source: {s.title || "Knowledge Base"}{" "}
                           {typeof s.similarity === "number" ? `(${(s.similarity * 100).toFixed(0)}%)` : ""}
                         </div>
                       ))}

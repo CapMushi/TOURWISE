@@ -1,13 +1,17 @@
 import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import type { AppRole } from "@/lib/api";
 
 type ProtectedRouteProps = {
   children: ReactNode;
+  requiredRole?: Extract<AppRole, "agent" | "admin">;
 };
 
-export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
-  const { user, loading } = useAuth();
+const APPROVED_AGENT_STATUSES = new Set(["approved"]);
+
+export const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
+  const { user, loading, isAdmin, isAgent, agentVerificationStatus } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -16,6 +20,20 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
 
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (requiredRole === "admin" && !isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (requiredRole === "agent") {
+    if (!isAgent) {
+      return <Navigate to="/agent-verification" replace />;
+    }
+
+    if (!APPROVED_AGENT_STATUSES.has(agentVerificationStatus ?? "")) {
+      return <Navigate to="/agent-verification" replace />;
+    }
   }
 
   return <>{children}</>;

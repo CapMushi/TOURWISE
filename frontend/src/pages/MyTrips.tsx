@@ -183,10 +183,12 @@ export default function MyTrips() {
     queryFn: getMyFavorites,
   });
 
-  const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
+  const { data: bookingsData, isLoading: bookingsLoading } = useQuery({
     queryKey: ["my-bookings", "all"],
     queryFn: () => getMyBookings(undefined),
   });
+
+  const bookings = bookingsData?.bookings ?? [];
 
   const removeMutation = useMutation({
     mutationFn: removeFavorite,

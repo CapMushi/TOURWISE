@@ -3,16 +3,23 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import { getCurrentUserContextWithToken, type AppRole } from "@/lib/api";
 import { supabase } from "@/lib/supabaseClient";
 
 type AuthContextValue = {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  appRole: AppRole;
+  isAdmin: boolean;
+  isAgent: boolean;
+  agentId: number | null;
+  agentVerificationStatus: string | null;
   signUpWithEmail: (
     email: string,
     password: string,
@@ -33,6 +40,38 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [appRole, setAppRole] = useState<AppRole>("traveler");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAgent, setIsAgent] = useState(false);
+  const [agentId, setAgentId] = useState<number | null>(null);
+  const [agentVerificationStatus, setAgentVerificationStatus] = useState<string | null>(null);
+
+  const resetRoleState = useCallback(() => {
+    setAppRole("traveler");
+    setIsAdmin(false);
+    setIsAgent(false);
+    setAgentId(null);
+    setAgentVerificationStatus(null);
+  }, []);
+
+  const loadUserContext = useCallback(async (nextSession: Session | null) => {
+    if (!nextSession) {
+      resetRoleState();
+      return;
+    }
+
+    try {
+      const context = await getCurrentUserContextWithToken(nextSession.access_token);
+      setAppRole(context.app_role);
+      setIsAdmin(context.is_admin);
+      setIsAgent(context.is_agent);
+      setAgentId(context.agent_id ?? null);
+      setAgentVerificationStatus(context.agent_verification_status ?? null);
+    } catch (error) {
+      console.error("[Auth] Failed to load user context", error);
+      resetRoleState();
+    }
+  }, [resetRoleState]);
 
   useEffect(() => {
     let isMounted = true;
@@ -47,6 +86,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       setSession(data.session);
       setUser(data.session?.user ?? null);
+      await loadUserContext(data.session);
+      if (!isMounted) return;
       setLoading(false);
     };
 
@@ -54,9 +95,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
+      await loadUserContext(newSession);
+      setLoading(false);
     });
 
     return () => {
@@ -165,15 +208,36 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   }, []);
 
-  const value: AuthContextValue = {
-    user,
-    session,
-    loading,
-    signUpWithEmail,
-    signInWithEmail,
-    signInWithGoogle,
-    signOut,
-  };
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      session,
+      loading,
+      appRole,
+      isAdmin,
+      isAgent,
+      agentId,
+      agentVerificationStatus,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      signOut,
+    }),
+    [
+      user,
+      session,
+      loading,
+      appRole,
+      isAdmin,
+      isAgent,
+      agentId,
+      agentVerificationStatus,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      signOut,
+    ]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

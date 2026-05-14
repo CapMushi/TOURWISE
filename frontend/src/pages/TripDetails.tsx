@@ -1,15 +1,27 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { addFavorite, getFavoriteStatus, getTripById, removeFavorite } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  addFavorite,
+  getFavoriteStatus,
+  getMyReviewForTrip,
+  getTripById,
+  getTripReviews,
+  removeFavorite,
+  upsertTripReview,
+} from "@/lib/api";
 import { format } from "date-fns";
 import { formatPkr } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Check, X, MapPin, Calendar, Users, Banknote, Heart } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { AlertCircle, Check, MapPin, Calendar, Users, Banknote, Heart, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,7 +29,11 @@ export default function TripDetails() {
   const navigate = useNavigate();
   const { tripId } = useParams();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [selectedImage, setSelectedImage] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [tripRating, setTripRating] = useState(5);
+  const [tripComment, setTripComment] = useState("");
   
   const tripIdNum = tripId ? parseInt(tripId, 10) : null;
   
@@ -33,6 +49,51 @@ export default function TripDetails() {
     enabled: !!tripIdNum,
   });
 
+  const { data: tripReviews = [] } = useQuery({
+    queryKey: ["trip-reviews", tripIdNum],
+    queryFn: () => getTripReviews(tripIdNum!),
+    enabled: !!tripIdNum && !!trip && trip.source !== "external",
+  });
+
+  const { data: myTripReview } = useQuery({
+    queryKey: ["my-trip-review", tripIdNum],
+    queryFn: () => getMyReviewForTrip(tripIdNum!),
+    enabled: !!tripIdNum && !!trip && trip.source !== "external",
+  });
+
+  const averageTripRating = useMemo(() => {
+    if (tripReviews.length === 0) return null;
+    const total = tripReviews.reduce((sum, review) => sum + Number(review.rating), 0);
+    return total / tripReviews.length;
+  }, [tripReviews]);
+
+  useEffect(() => {
+    if (myTripReview) {
+      setTripRating(Number(myTripReview.rating));
+      setTripComment(myTripReview.comment ?? "");
+    }
+  }, [myTripReview]);
+
+  const saveTripReviewMutation = useMutation({
+    mutationFn: () =>
+      upsertTripReview(tripIdNum!, {
+        rating: tripRating,
+        comment: tripComment.trim() || undefined,
+      }),
+    onSuccess: () => {
+      toast({ title: "Review saved", description: "Thanks for sharing your trip feedback." });
+      queryClient.invalidateQueries({ queryKey: ["trip-reviews", tripIdNum] });
+      queryClient.invalidateQueries({ queryKey: ["my-trip-review", tripIdNum] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Review failed",
+        description: error.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -40,19 +101,6 @@ export default function TripDetails() {
         <div className="max-w-7xl mx-auto px-6 py-8">
           <Skeleton className="h-96 w-full" />
         </div>
-      </div>
-    );
-  }
-
-  if (error || !trip) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <Alert variant="destructive" className="max-w-md">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            {error instanceof Error ? error.message : "Trip not found"}
-          </AlertDescription>
-        </Alert>
       </div>
     );
   }
@@ -66,6 +114,34 @@ export default function TripDetails() {
   const durationDays = Math.ceil(
     (arrivalDate.getTime() - departureDate.getTime()) / (1000 * 60 * 60 * 24)
   );
+  const isExternal = trip.source === "external";
+  const isAlmostFull =
+    trip.available_seats > 0 &&
+    trip.available_seats <= Math.max(3, Math.ceil(trip.total_seats * 0.2));
+  const suitabilityLabel =
+    trip.suitability && trip.suitability !== "Any" ? trip.suitability : null;
+  const organizerLabel = trip.agent_name ?? (isExternal ? "External partner" : "TourWise travel agent");
+
+  const showPreviousImage = () => {
+    setSelectedImage((prev) => (prev === 0 ? gallery.length - 1 : prev - 1));
+  };
+
+  const showNextImage = () => {
+    setSelectedImage((prev) => (prev === gallery.length - 1 ? 0 : prev + 1));
+  };
+
+  if (error || !trip) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <Alert variant="destructive" className="max-w-md">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {error instanceof Error ? error.message : "Trip not found"}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   const handleFavoriteToggle = async () => {
     if (!tripIdNum) return;
@@ -98,20 +174,23 @@ export default function TripDetails() {
   return (
     <div className="min-h-screen bg-background">
       {/* Image Gallery */}
-      <div className="w-full h-[400px] overflow-hidden">
-        <img 
-          src={heroSrc}
-          alt={`${trip.origin_city} to ${trip.destination_city}`}
-          className="w-full h-full object-cover"
-        />
+      <div className="w-full h-[280px] overflow-hidden sm:h-[360px] lg:h-[400px]">
+        <button className="h-full w-full" type="button" onClick={() => setLightboxOpen(true)}>
+          <img 
+            src={heroSrc}
+            alt={`${trip.origin_city} to ${trip.destination_city}`}
+            className="w-full h-full object-cover"
+          />
+        </button>
       </div>
       {gallery.length > 1 && (
-        <div className="max-w-7xl mx-auto px-6 pt-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
           <div className="flex gap-3 overflow-x-auto">
             {gallery.map((img, idx) => (
               <button
                 key={`${img}-${idx}`}
                 onClick={() => setSelectedImage(idx)}
+                type="button"
                 className={`h-20 w-28 rounded-md overflow-hidden border-2 shrink-0 ${
                   selectedImage === idx ? "border-primary" : "border-transparent"
                 }`}
@@ -124,15 +203,19 @@ export default function TripDetails() {
       )}
 
       {/* Two Column Layout */}
-      <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column - Main Content */}
         <div className="lg:col-span-2 space-y-8">
           {/* Core Trip Details */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading text-2xl">
-                {trip.origin_city} → {trip.destination_city}
-              </CardTitle>
+              <div className="flex flex-wrap items-center gap-3">
+                <CardTitle className="font-heading text-2xl">
+                  {trip.origin_city} → {trip.destination_city}
+                </CardTitle>
+                {isExternal && <Badge className="bg-sky-600 text-white">Partner Trip</Badge>}
+                {isAlmostFull && <Badge className="bg-orange-500 text-white">Only {trip.available_seats} seats left</Badge>}
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-2">
@@ -178,80 +261,57 @@ export default function TripDetails() {
             </CardContent>
           </Card>
 
-          {/* Pricing and Inclusions */}
+          {/* Booking Snapshot */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading">💰 Pricing and Inclusions</CardTitle>
+              <CardTitle className="font-heading">Booking Snapshot</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center gap-2">
                 <Banknote className="h-5 w-5 text-primary" />
                 <p className="text-xl font-bold text-primary">
-                  {formatPkr(trip.price)} per person (PKR)
+                  {formatPkr(trip.price)} per traveler
                 </p>
               </div>
-              
-              <div>
-                <h4 className="font-medium mb-2">Inclusions:</h4>
-                <ul className="space-y-1">
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span>Accommodation (Twin-share)</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span>Breakfast daily, 2 Dinners</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span>All listed guided tours</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span>Park entry fees</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span>Local transportation</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-accent" />
-                    <span className="flex items-center gap-1">
-                      <span className="px-2 py-0.5 bg-primary/20 text-primary rounded-full text-xs font-medium">Flight Included</span>
-                      International flight coverage
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">{trip.available_seats} seats open</Badge>
+                <Badge variant="outline">Organized by {organizerLabel}</Badge>
+                {suitabilityLabel && <Badge variant="outline">Best for {suitabilityLabel}</Badge>}
+                <Badge variant="outline">{isExternal ? "Partner fulfillment" : "Booked in TourWise"}</Badge>
+              </div>
+              <div className="rounded-xl border border-border bg-background/40 p-4">
+                <h4 className="mb-2 font-medium">What this listing confirms right now</h4>
+                <ul className="space-y-2 text-sm text-body-text">
+                  <li className="flex items-start gap-2">
+                    <Check className="mt-0.5 h-4 w-4 text-accent" />
+                    <span>
+                      Your confirmed basics are the route, schedule, transport type, current price, and
+                      live seat availability shown on this page.
                     </span>
                   </li>
-                </ul>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-2">Exclusions:</h4>
-                <ul className="space-y-1">
-                  <li className="flex items-center gap-2">
-                    <X className="h-4 w-4 text-destructive" />
-                    <span>Meals not listed</span>
+                  <li className="flex items-start gap-2">
+                    <Check className="mt-0.5 h-4 w-4 text-accent" />
+                    <span>
+                      Traveler reviews and the organizer profile are available so you can judge confidence
+                      before you book.
+                    </span>
                   </li>
-                  <li className="flex items-center gap-2">
-                    <X className="h-4 w-4 text-destructive" />
-                    <span>Personal expenses</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <X className="h-4 w-4 text-destructive" />
-                    <span>Travel insurance</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <X className="h-4 w-4 text-destructive" />
-                    <span>Tips</span>
+                  <li className="flex items-start gap-2">
+                    <Check className="mt-0.5 h-4 w-4 text-accent" />
+                    <span>
+                      Extra items like room setup, meals, pickup point, and baggage details may vary by
+                      listing and should be confirmed if they matter for your trip.
+                    </span>
                   </li>
                 </ul>
               </div>
             </CardContent>
           </Card>
 
-          {/* Bus Itinerary */}
+          {/* Timing Overview */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading">🚌 Bus Itinerary</CardTitle>
+              <CardTitle className="font-heading">Trip Timing Overview</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="p-4 glass-panel rounded-lg border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-accent/5">
@@ -261,7 +321,7 @@ export default function TripDetails() {
                     <p className="font-bold text-lg capitalize">{trip.transport_type.replace("_", " ")}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
-                    <span className="text-primary font-bold text-lg">🚌</span>
+                    <span className="text-primary font-bold text-lg">TW</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-3">
@@ -289,52 +349,48 @@ export default function TripDetails() {
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-border">
-                  <p className="text-xs text-body-text">
-                    <span className="font-medium">Available Seats:</span> {trip.available_seats} / {trip.total_seats} | 
-                    <span className="font-medium ml-2">Status:</span> <span className="text-accent">
-                      {trip.available_seats > 0 ? "Available" : "Fully Booked"}
-                    </span>
+                  <p className="text-xs text-body-text leading-relaxed">
+                    Treat this as your route and timing summary. Stop-by-stop activities or lodging details
+                    are not guaranteed unless the organizer explicitly provides them.
                   </p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Transportation & Logistics */}
-          <Card className="glass-card border-0">
-            <CardHeader>
-              <CardTitle className="font-heading">🚗 Transportation & Logistics</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p><span className="font-medium">Primary Transport Mode:</span> Carpooling / Self-Drive</p>
-              <p><span className="font-medium">Meeting Point:</span> Central Plaza, Lahore</p>
-              <p><span className="font-medium">Departure/Return Time:</span> Fri 6:00 AM / Sun 8:00 PM</p>
-              
-              <div>
-                <h4 className="font-medium mb-2">Carpooling Options:</h4>
-                <ul className="space-y-1 ml-4">
-                  <li>• Passenger Option: {formatPkr(69500)} (need a ride)</li>
-                  <li>• Driver Option: {formatPkr(61200)} (drive and take passengers)</li>
-                  <li>• Self-Drive Option: {formatPkr(65300)} (drive alone)</li>
-                </ul>
-              </div>
-              
-              <p className="text-sm text-body-text">Agent will coordinate via WhatsApp group 2 days prior.</p>
-            </CardContent>
-          </Card>
+          <div className="grid gap-8 md:grid-cols-2">
+            <Card className="glass-card border-0">
+              <CardHeader>
+                <CardTitle className="font-heading">What To Confirm Before You Book</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-body-text">
+                <p>Meeting point and check-in instructions for your departure day.</p>
+                <p>What luggage, gear, or transport-specific limits apply to this trip.</p>
+                <p>Whether accommodation, meals, or guided activities are part of the price.</p>
+                <p>Any traveler requirements that matter for families, couples, or solo travelers.</p>
+              </CardContent>
+            </Card>
 
-          {/* Accommodation & Meals */}
-          <Card className="glass-card border-0">
-            <CardHeader>
-              <CardTitle className="font-heading">🏨 Accommodation & Meals</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p><span className="font-medium">Accommodation Type:</span> Guesthouse</p>
-              <p><span className="font-medium">Rooming Basis:</span> Twin-share basis</p>
-              <p><span className="font-medium">Meal Plan:</span> Breakfast & Dinner included</p>
-              <p className="text-sm text-body-text">Please specify any dietary restrictions at booking.</p>
-            </CardContent>
-          </Card>
+            <Card className="glass-card border-0">
+              <CardHeader>
+                <CardTitle className="font-heading">Why Travelers Can Judge Faster</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-body-text">
+                <p>
+                  This page shows real departure timing, live seat counts, and organizer details instead of
+                  a generic package description.
+                </p>
+                <p>
+                  You can review the agent profile, compare similar listings, and read traveler reviews
+                  before committing.
+                </p>
+                <p>
+                  If something important is not shown here yet, it is better to clarify it before checkout
+                  than assume it is included.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Detailed Itinerary */}
           <Card className="glass-card border-0">
@@ -365,25 +421,21 @@ export default function TripDetails() {
                           {dayNumber === 1 && (
                             <>
                               <li>• {format(departureDate, "h:mm a")} - Depart from {trip.origin_city}</li>
-                              <li>• Check-in at accommodation</li>
-                              <li>• Welcome dinner & trip briefing</li>
+                              <li>• Travel toward {trip.destination_city} using the listed {trip.transport_type.replace("_", " ")}</li>
+                              <li>• Arrive by {format(arrivalDate, "h:mm a")} and review organizer instructions for the rest of the day</li>
                             </>
                           )}
                           {dayNumber > 1 && dayNumber < durationDays && (
                             <>
-                              <li>• 7:00 AM - Breakfast</li>
-                              <li>• Morning activities and sightseeing</li>
-                              <li>• 1:00 PM - Lunch</li>
-                              <li>• Afternoon activities</li>
-                              <li>• 7:00 PM - Group dinner</li>
+                              <li>• Keep this day flexible for the activities or stops confirmed by the organizer</li>
+                              <li>• Recheck transport timing, meeting locations, and any lodging details for this leg</li>
+                              <li>• Use your booking details and organizer profile if you need to confirm logistics</li>
                             </>
                           )}
                           {dayNumber === durationDays && (
                             <>
-                              <li>• 7:00 AM - Breakfast</li>
-                              <li>• Morning leisure time</li>
-                              <li>• Check-out from accommodation</li>
-                              <li>• Begin return journey</li>
+                              <li>• Finalize your return timing with the organizer if there are multiple stops</li>
+                              <li>• Make your way back toward {trip.origin_city}</li>
                               <li>• {format(arrivalDate, "h:mm a")} - Arrive back at {trip.origin_city}</li>
                             </>
                           )}
@@ -399,16 +451,110 @@ export default function TripDetails() {
           {/* Booking & Policies */}
           <Card className="glass-card border-0">
             <CardHeader>
-              <CardTitle className="font-heading">🔒 Booking & Policies</CardTitle>
+              <CardTitle className="font-heading">Booking Confidence Notes</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <p><span className="font-medium">Group Size:</span> Min 10, Max 20</p>
-              <p><span className="font-medium">Booking Deadline:</span> October 20, 2025</p>
-              <p><span className="font-medium">Cancellation Policy:</span> Full refund 14 days prior. 50% refund 7-13 days prior. No refund within 7 days.</p>
-              <p><span className="font-medium">What to Pack:</span> Hiking boots, warm jacket, water bottle</p>
-              <p><span className="font-medium">Emergency Contact:</span> +92 300 1234567</p>
+            <CardContent className="space-y-3 text-sm text-body-text">
+              <p>
+                Seat availability is live at the moment you open this page, but final confirmation still
+                depends on those seats remaining when you submit your booking.
+              </p>
+              <p>
+                TourWise collects passenger details and special requests during checkout so the organizer has
+                the information needed to fulfill your booking.
+              </p>
+              <p>
+                If you are booking a partner trip, payment and booking still happen in TourWise while trip
+                fulfillment is handled by the external provider.
+              </p>
+              <p>
+                If plans change, manage the booking from your bookings area and review the latest status there
+                instead of assuming a fixed refund rule.
+              </p>
             </CardContent>
           </Card>
+
+          {!isExternal && (
+            <Card className="glass-card border-0">
+              <CardHeader>
+                <CardTitle className="font-heading flex flex-wrap items-center gap-3">
+                  Traveler Reviews
+                  {averageTripRating != null && (
+                    <span className="text-sm font-normal text-body-text">
+                      {averageTripRating.toFixed(1)} / 5 from {tripReviews.length} review{tripReviews.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="rounded-xl border border-border bg-background/40 p-4 space-y-4">
+                  <div className="space-y-2">
+                    <Label>Rate this trip</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          variant={tripRating === value ? "default" : "outline"}
+                          onClick={() => setTripRating(value)}
+                        >
+                          {value}
+                          <Star className="ml-2 h-4 w-4" />
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="trip-review">Share your experience</Label>
+                    <Textarea
+                      id="trip-review"
+                      value={tripComment}
+                      onChange={(e) => setTripComment(e.target.value)}
+                      rows={4}
+                      placeholder="What stood out about the trip, logistics, and overall experience?"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => saveTripReviewMutation.mutate()}
+                    disabled={saveTripReviewMutation.isPending}
+                  >
+                    {saveTripReviewMutation.isPending
+                      ? "Saving..."
+                      : myTripReview
+                        ? "Update Trip Review"
+                        : "Submit Trip Review"}
+                  </Button>
+                </div>
+
+                {tripReviews.length === 0 ? (
+                  <div className="rounded-xl border border-border bg-background/40 p-6 text-center text-body-text">
+                    No reviews yet. Be the first traveler to review this trip.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {tripReviews.map((review) => (
+                      <div key={review.review_id} className="rounded-xl border border-border bg-background/40 p-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="font-medium text-heading">{review.username || "Traveler"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {format(new Date(review.created_at), "MMM dd, yyyy")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 text-sm">
+                            <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                            {Number(review.rating).toFixed(1)} / 5
+                          </div>
+                        </div>
+                        {review.comment && (
+                          <p className="mt-3 text-sm leading-relaxed text-body-text">{review.comment}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Column - Sticky Booking Card */}
@@ -416,13 +562,55 @@ export default function TripDetails() {
           <div className="sticky top-8">
             <Card className="glass-card border-0">
               <CardHeader>
-                <CardTitle className="font-heading">Book This Trip</CardTitle>
+                <CardTitle className="font-heading">Reserve Your Seats</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {trip.available_seats === 0 ? (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      This trip is currently fully booked.
+                    </AlertDescription>
+                  </Alert>
+                ) : isAlmostFull ? (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Seats are going fast. Only {trip.available_seats} of {trip.total_seats} remain.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {isExternal && (
+                  <Alert>
+                    <AlertDescription>
+                      This is a partner-provided trip. Booking still happens inside TourWise, but fulfillment is handled by the external provider.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {trip.agent_name && (
                   <div>
                     <p className="text-sm text-body-text mb-1">Organized by</p>
-                    <p className="font-medium">{trip.agent_name}</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="font-medium">{trip.agent_name}</p>
+                      {trip.agent_id > 0 && (
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0"
+                          onClick={() => navigate(`/agents/${trip.agent_id}`)}
+                        >
+                          View agent profile
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {!isExternal && (
+                  <div className="rounded-xl border border-border bg-background/40 p-3 text-sm text-body-text">
+                    Booking stays inside TourWise, and you can review the organizer profile before checkout.
                   </div>
                 )}
                 
@@ -431,6 +619,10 @@ export default function TripDetails() {
                     {formatPkr(trip.price)}
                   </p>
                   <p className="text-sm text-body-text">per person (PKR)</p>
+                  <p className="mt-2 text-xs text-body-text">
+                    {trip.available_seats} of {trip.total_seats} seats currently open
+                    {tripReviews.length > 0 ? ` • ${tripReviews.length} traveler review${tripReviews.length === 1 ? "" : "s"}` : ""}
+                  </p>
                 </div>
 
                 <Button 
@@ -460,6 +652,56 @@ export default function TripDetails() {
           </div>
         </div>
       </div>
+
+      <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
+        <DialogContent className="max-w-5xl border-0 bg-black/95 p-3 sm:p-6">
+          <div className="relative flex items-center justify-center">
+            {gallery.length > 1 && (
+              <Button
+                type="button"
+                size="icon"
+                variant="secondary"
+                className="absolute left-2 top-1/2 z-10 -translate-y-1/2"
+                onClick={showPreviousImage}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <img
+              src={heroSrc}
+              alt={`${trip.origin_city} to ${trip.destination_city}`}
+              className="max-h-[75vh] w-full rounded-lg object-contain"
+            />
+            {gallery.length > 1 && (
+              <Button
+                type="button"
+                size="icon"
+                variant="secondary"
+                className="absolute right-2 top-1/2 z-10 -translate-y-1/2"
+                onClick={showNextImage}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {gallery.length > 1 && (
+            <div className="mt-4 flex gap-3 overflow-x-auto">
+              {gallery.map((img, idx) => (
+                <button
+                  key={`${img}-lightbox-${idx}`}
+                  type="button"
+                  onClick={() => setSelectedImage(idx)}
+                  className={`h-16 w-24 shrink-0 overflow-hidden rounded-md border-2 ${
+                    selectedImage === idx ? "border-primary" : "border-transparent"
+                  }`}
+                >
+                  <img src={img} alt={`Gallery ${idx + 1}`} className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

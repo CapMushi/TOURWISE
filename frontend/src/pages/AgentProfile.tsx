@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   User,
@@ -12,6 +12,7 @@ import {
   X,
   Briefcase,
   Calendar,
+  Camera,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { getAgentProfile, updateAgentProfile, getMyTrips, type AgentProfileData } from "@/lib/api";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getAgentProfile, updateAgentProfile, getMyTrips, uploadProfileImage, type AgentProfileData } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { formatPkr } from "@/lib/currency";
 import { format } from "date-fns";
@@ -29,8 +31,6 @@ import { format } from "date-fns";
 function verificationBadge(status?: string | null) {
   switch (status) {
     case "approved":
-    case "active":
-    case "verified":
       return <Badge className="bg-green-500 text-white">Verified</Badge>;
     case "pending":
       return <Badge variant="secondary">Pending Verification</Badge>;
@@ -45,6 +45,7 @@ export default function AgentProfile() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   // Form state
   const [name, setName] = useState("");
@@ -103,6 +104,50 @@ export default function AgentProfile() {
     },
   });
 
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!profile?.user_id) {
+        throw new Error("Agent account not ready for image uploads yet.");
+      }
+
+      const uploadedUrl = await uploadProfileImage(file, profile.user_id, "agent");
+      return updateAgentProfile({
+        profile_details: {
+          ...(profile?.profile_details ?? {}),
+          avatar_url: uploadedUrl,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Photo updated", description: "Your agent profile photo has been uploaded." });
+      queryClient.invalidateQueries({ queryKey: ["agent-profile"] });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Upload failed",
+        description: (err as Error)?.message ?? "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handlePhotoSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid file",
+        description: "Please choose an image file.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    uploadPhotoMutation.mutate(file);
+  };
+
   const handleCancel = () => {
     if (profile) {
       setName(profile.name ?? "");
@@ -139,6 +184,7 @@ export default function AgentProfile() {
   const phone_ = (profile?.contact_info?.phone as string) || null;
   const address_ = (profile?.contact_info?.address as string) || null;
   const bio_ = (profile?.profile_details?.bio as string) || null;
+  const avatarUrl = (profile?.profile_details?.avatar_url as string) || undefined;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
@@ -161,8 +207,31 @@ export default function AgentProfile() {
         <CardHeader className="pb-4">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
-                <User className="h-10 w-10 text-primary" />
+              <div className="space-y-3">
+                <Avatar className="h-20 w-20 border border-border">
+                  <AvatarImage src={avatarUrl} alt={profile?.name ?? "Agent avatar"} />
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    <User className="h-10 w-10" />
+                  </AvatarFallback>
+                </Avatar>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoSelected}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={uploadPhotoMutation.isPending}
+                >
+                  <Camera className="mr-2 h-4 w-4" />
+                  {uploadPhotoMutation.isPending ? "Uploading..." : "Upload Photo"}
+                </Button>
               </div>
               <div>
                 {editing ? (

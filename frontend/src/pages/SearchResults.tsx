@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { TripCardFlexible } from "@/components/TripCardFlexible";
 import { getTrips, type TripSearchFilters } from "@/lib/api";
@@ -6,10 +7,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Search as SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TRIP_SORT_OPTIONS, type TripSortOption } from "@/lib/tripSort";
+
+const PAGE_SIZE = 9;
 
 export default function SearchResults() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [sortBy, setSortBy] = useState<TripSortOption>("recommended");
 
   // Extract search parameters from URL
   const filters: TripSearchFilters = {};
@@ -84,33 +91,98 @@ export default function SearchResults() {
 
   // Check if we have any active filters
   const hasFilters = Object.keys(filters).length > 0;
+  const currentPageParam = Number(searchParams.get("page") || "1");
+  const currentPage = Number.isFinite(currentPageParam) && currentPageParam > 0 ? currentPageParam : 1;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["trips", filters],
-    queryFn: () => getTrips(hasFilters ? filters : undefined),
+    queryKey: ["trips", filters, sortBy, currentPage],
+    queryFn: () =>
+      getTrips(hasFilters ? filters : undefined, {
+        sortBy,
+        page: currentPage,
+        pageSize: PAGE_SIZE,
+      }),
   });
 
   const trips = data?.trips || [];
+  const activeFilters = [
+    destinationProvince ? `Province: ${destinationProvince}` : null,
+    destinationCity ? `City: ${destinationCity}` : null,
+    originCity ? `Origin: ${originCity}` : null,
+    transportType && transportType.toLowerCase() !== "any" ? `Transport: ${transportType}` : null,
+    priceFrom ? `Min ${priceFrom} PKR` : null,
+    priceTo ? `Max ${priceTo} PKR` : null,
+    travelers ? `${travelers} travelers` : null,
+    suitability && suitability !== "Any" ? suitability : null,
+  ].filter(Boolean) as string[];
+
+  const updatePage = (nextPage: number) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextPage <= 1) {
+      nextParams.delete("page");
+    } else {
+      nextParams.set("page", String(nextPage));
+    }
+    setSearchParams(nextParams);
+  };
+
+  const handleSortChange = (value: TripSortOption) => {
+    setSortBy(value);
+    updatePage(1);
+  };
+
+  const visibleCurrentPage = data?.page ?? currentPage;
+  const totalPages = data?.total_pages ?? 1;
+  const paginationWindow = 2;
+  const startPage = Math.max(1, visibleCurrentPage - paginationWindow);
+  const endPage = Math.min(totalPages, visibleCurrentPage + paginationWindow);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, idx) => startPage + idx);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-3">
           <h1 className="text-4xl font-heading font-bold text-heading mb-2">Search Results</h1>
           {isLoading ? (
             <p className="text-body-text">Searching...</p>
           ) : (
             <p className="text-body-text">
               {hasFilters
-                ? `Found ${trips.length} ${trips.length === 1 ? "trip" : "trips"} matching your search`
-                : `Showing all ${trips.length} ${trips.length === 1 ? "trip" : "trips"} (ordered by trip ID)`}
+                ? `Found ${data?.total ?? 0} ${(data?.total ?? 0) === 1 ? "trip" : "trips"} matching your search`
+                : `Showing ${(data?.total ?? 0)} ${(data?.total ?? 0) === 1 ? "trip" : "trips"} across all pages`}
             </p>
           )}
+          {activeFilters.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {activeFilters.map((filter) => (
+                <Badge key={filter} variant="secondary" className="rounded-full">
+                  {filter}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
-        <Button variant="outline" onClick={() => navigate("/")}>
-          <SearchIcon className="h-4 w-4 mr-2" />
-          New Search
-        </Button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="min-w-[220px]">
+            <p className="mb-2 text-sm font-medium text-heading">Sort trips</p>
+            <Select value={sortBy} onValueChange={handleSortChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                {TRIP_SORT_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" onClick={() => navigate("/")}>
+            <SearchIcon className="h-4 w-4 mr-2" />
+            New Search
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -138,16 +210,51 @@ export default function SearchResults() {
           <Button onClick={() => navigate("/")}>Search Trips</Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {trips.map((trip) => (
-            <TripCardFlexible
-              key={trip.trip_id}
-              trip={trip}
-              variant="traveler"
-              showAgentName={true}
-              onClick={() => navigate(`/trip/${trip.trip_id}`)}
-            />
-          ))}
+        <div className="space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {trips.map((trip) => (
+              <TripCardFlexible
+                key={trip.trip_id}
+                trip={trip}
+                variant="traveler"
+                showAgentName={true}
+                onClick={() => navigate(`/trip/${trip.trip_id}`)}
+              />
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-body-text">
+                Page {visibleCurrentPage} of {totalPages}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => updatePage(visibleCurrentPage - 1)}
+                  disabled={!data?.has_previous_page}
+                >
+                  Previous
+                </Button>
+                {pageNumbers.map((pageNumber) => (
+                  <Button
+                    key={pageNumber}
+                    variant={pageNumber === visibleCurrentPage ? "default" : "outline"}
+                    onClick={() => updatePage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </Button>
+                ))}
+                <Button
+                  variant="outline"
+                  onClick={() => updatePage(visibleCurrentPage + 1)}
+                  disabled={!data?.has_next_page}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

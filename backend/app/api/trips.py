@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 from decimal import Decimal
@@ -75,6 +75,40 @@ class TripResponse(BaseModel):
 class TripListResponse(BaseModel):
     trips: List[TripResponse]
     total: int
+    page: int = 1
+    page_size: Optional[int] = None
+    total_pages: int = 1
+    has_next_page: bool = False
+    has_previous_page: bool = False
+
+
+def _sort_trip_responses(trips: List[TripResponse], sort_by: str) -> List[TripResponse]:
+    sorted_trips = list(trips)
+
+    if sort_by == "price-low-high":
+        return sorted(sorted_trips, key=lambda trip: (trip.price, trip.departure_time, trip.trip_id))
+    if sort_by == "price-high-low":
+        return sorted(
+            sorted_trips,
+            key=lambda trip: (-trip.price, trip.departure_time, trip.trip_id),
+        )
+    if sort_by == "availability":
+        return sorted(
+            sorted_trips,
+            key=lambda trip: (-trip.available_seats, trip.departure_time, trip.trip_id),
+        )
+    if sort_by == "departure-soonest":
+        return sorted(sorted_trips, key=lambda trip: (trip.departure_time, trip.trip_id))
+
+    return sorted(
+        sorted_trips,
+        key=lambda trip: (
+            0 if trip.source == "local" else 1,
+            -trip.available_seats,
+            trip.departure_time,
+            trip.trip_id,
+        ),
+    )
 
 
 def _canonical_offer_to_response(offer: CanonicalTripOffer) -> TripResponse:
@@ -182,6 +216,12 @@ async def get_trips(
     departure_date_to: Optional[datetime] = Query(None, description="Filter trips departing before this date"),
     min_available_seats: Optional[int] = Query(None, ge=0, description="Minimum available seats"),
     suitability: Optional[str] = Query(None, description="Filter by suitability (Solo Travelers, Families, Couples)"),
+    sort_by: Literal["recommended", "departure-soonest", "price-low-high", "price-high-low", "availability"] = Query(
+        "recommended",
+        description="Sort option for trip listings",
+    ),
+    page: Optional[int] = Query(None, ge=1, description="Page number for paginated results"),
+    page_size: Optional[int] = Query(None, ge=1, le=48, description="Page size for paginated results"),
 ):
     """
     Get all available trips with optional filters for search functionality.
@@ -189,6 +229,9 @@ async def get_trips(
     If no filters are provided, returns all trips ordered by trip_id.
     """
     supabase = get_supabase_client()
+    should_paginate = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 12
     
     # Check if any filters are provided
     has_filters = any([
@@ -214,41 +257,89 @@ async def get_trips(
         )
         """
     )
+    count_query = supabase.table("trips").select("trip_id", count="exact").limit(1)
     
     # Only filter by available_seats if filters are provided
     # If no filters, show all trips (including those with 0 available seats)
     if has_filters:
         query = query.gt("available_seats", 0)
+        count_query = count_query.gt("available_seats", 0)
     
     # Apply filters
     if destination_province:
         query = query.ilike("destination_province", f"%{destination_province}%")
+        count_query = count_query.ilike("destination_province", f"%{destination_province}%")
     if destination_city:
         query = query.ilike("destination_city", f"%{destination_city}%")
+        count_query = count_query.ilike("destination_city", f"%{destination_city}%")
     if origin_city:
         query = query.ilike("origin_city", f"%{origin_city}%")
+        count_query = count_query.ilike("origin_city", f"%{origin_city}%")
     if transport_type and transport_type.lower() != "any":
         query = query.eq("transport_type", transport_type.lower())
+        count_query = count_query.eq("transport_type", transport_type.lower())
     if price_min is not None:
         query = query.gte("price", price_min)
+        count_query = count_query.gte("price", price_min)
     if price_max is not None:
         query = query.lte("price", price_max)
+        count_query = count_query.lte("price", price_max)
     if departure_date_from:
         query = query.gte("departure_time", departure_date_from.isoformat())
+        count_query = count_query.gte("departure_time", departure_date_from.isoformat())
     if departure_date_to:
         query = query.lte("departure_time", departure_date_to.isoformat())
+        count_query = count_query.lte("departure_time", departure_date_to.isoformat())
     if min_available_seats is not None:
         query = query.gte("available_seats", min_available_seats)
+        count_query = count_query.gte("available_seats", min_available_seats)
     if suitability and suitability.lower() != "any":
         query = query.eq("suitability", suitability)
+        count_query = count_query.eq("suitability", suitability)
     
-    # Order by trip_id if no filters, otherwise by departure time
-    if has_filters:
-        query = query.order("departure_time", desc=False)
+    if sort_by == "price-low-high":
+        query = query.order("price", desc=False).order("departure_time", desc=False).order("trip_id", desc=False)
+    elif sort_by == "price-high-low":
+        query = query.order("price", desc=True).order("departure_time", desc=False).order("trip_id", desc=False)
+    elif sort_by == "availability":
+        query = query.order("available_seats", desc=True).order("departure_time", desc=False).order("trip_id", desc=False)
     else:
-        query = query.order("trip_id", desc=False)
+        query = query.order("departure_time", desc=False).order("trip_id", desc=False)
     
     try:
+        local_total_result = count_query.execute()
+        local_total = local_total_result.count or 0
+
+        external_trips: List[TripResponse] = []
+        for offer in all_external_offers():
+            if _external_offer_matches_filters(
+                offer,
+                has_filters=has_filters,
+                destination_province=destination_province,
+                destination_city=destination_city,
+                origin_city=origin_city,
+                transport_type=transport_type,
+                price_min=price_min,
+                price_max=price_max,
+                departure_date_from=departure_date_from,
+                departure_date_to=departure_date_to,
+                min_available_seats=min_available_seats,
+                suitability=suitability,
+            ):
+                external_trips.append(_canonical_offer_to_response(offer))
+
+        external_total = len(external_trips)
+        total = local_total + external_total
+        effective_page_size = resolved_page_size if should_paginate else max(total, 1)
+        total_pages = max((total + effective_page_size - 1) // effective_page_size, 1)
+        current_page = min(resolved_page, total_pages) if should_paginate else 1
+
+        if should_paginate and total > 0:
+            end_index = current_page * resolved_page_size
+            fetch_limit = min(local_total, end_index + external_total)
+            if fetch_limit > 0:
+                query = query.range(0, fetch_limit - 1)
+
         result = query.execute()
         trip_ids = [trip_row["trip_id"] for trip_row in result.data]
         images_map = _fetch_trip_images_map(supabase, trip_ids)
@@ -284,27 +375,23 @@ async def get_trips(
             )
             trips.append(trip)
 
-        external_trips: List[TripResponse] = []
-        for offer in all_external_offers():
-            if _external_offer_matches_filters(
-                offer,
-                has_filters=has_filters,
-                destination_province=destination_province,
-                destination_city=destination_city,
-                origin_city=origin_city,
-                transport_type=transport_type,
-                price_min=price_min,
-                price_max=price_max,
-                departure_date_from=departure_date_from,
-                departure_date_to=departure_date_to,
-                min_available_seats=min_available_seats,
-                suitability=suitability,
-            ):
-                external_trips.append(_canonical_offer_to_response(offer))
-        external_trips.sort(key=lambda t: (t.departure_time, t.trip_id))
         trips.extend(external_trips)
+        trips = _sort_trip_responses(trips, sort_by)
 
-        return TripListResponse(trips=trips, total=len(trips))
+        if should_paginate:
+            start_index = (current_page - 1) * resolved_page_size
+            end_index = start_index + resolved_page_size
+            trips = trips[start_index:end_index]
+
+        return TripListResponse(
+            trips=trips,
+            total=total,
+            page=current_page,
+            page_size=effective_page_size,
+            total_pages=total_pages,
+            has_next_page=current_page < total_pages,
+            has_previous_page=current_page > 1,
+        )
     
     except Exception as e:
         print(f"Error fetching trips: {str(e)}")

@@ -68,6 +68,16 @@ class BookingResponse(BaseModel):
     booking_source: str = "local"
 
 
+class BookingListResponse(BaseModel):
+    bookings: List[BookingResponse]
+    total: int
+    page: int = 1
+    page_size: int = 10
+    total_pages: int = 1
+    has_next_page: bool = False
+    has_previous_page: bool = False
+
+
 class UpdateBookingRequest(BaseModel):
     number_of_seats: Optional[int] = Field(None, gt=0)
     contact_email: Optional[str] = None
@@ -176,6 +186,53 @@ def _external_booking_row_to_response(row: dict, offer: CanonicalTripOffer | Non
         trip=trip_dict,
         agent_name=agent_name,
         booking_source="external",
+    )
+
+
+def _local_booking_row_to_response(booking: dict, supabase) -> BookingResponse:
+    trip_result = supabase.table("trips").select("*").eq("trip_id", booking["trip_id"]).execute()
+    trip = trip_result.data[0] if trip_result.data else None
+
+    agent_name = None
+    if trip:
+        agent_result = (
+            supabase.table("travel_agent")
+            .select("name")
+            .eq("agent_id", trip["agent_id"])
+            .execute()
+        )
+        agent_name = agent_result.data[0].get("name") if agent_result.data else None
+
+    return BookingResponse(
+        booking_id=booking["booking_id"],
+        user_id=booking["user_id"],
+        trip_id=booking["trip_id"],
+        itinerary_id=booking.get("itinerary_id"),
+        booking_date=datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00")),
+        status=booking["status"],
+        number_of_seats=booking["number_of_seats"],
+        unit_price_at_booking=_resolve_unit_price(booking, trip),
+        total_price=Decimal(str(booking["total_price"])),
+        passenger_names=booking.get("passenger_names", []),
+        contact_email=booking["contact_email"],
+        contact_phone=booking["contact_phone"],
+        special_requests=booking.get("special_requests"),
+        booking_reference=booking["booking_reference"],
+        confirmed_at=datetime.fromisoformat(booking["confirmed_at"].replace("Z", "+00:00")) if booking.get("confirmed_at") else None,
+        cancelled_at=datetime.fromisoformat(booking["cancelled_at"].replace("Z", "+00:00")) if booking.get("cancelled_at") else None,
+        cancellation_reason=booking.get("cancellation_reason"),
+        refund_amount=Decimal(str(booking["refund_amount"])) if booking.get("refund_amount") else None,
+        updated_at=datetime.fromisoformat(booking.get("updated_at", booking["booking_date"]).replace("Z", "+00:00")),
+        trip={
+            "trip_id": trip["trip_id"],
+            "origin_city": trip["origin_city"],
+            "destination_city": trip["destination_city"],
+            "departure_time": trip["departure_time"],
+            "arrival_time": trip["arrival_time"],
+            "price": float(_resolve_unit_price(booking, trip)),
+        } if trip else None,
+        agent_name=agent_name,
+        booking_source="local",
     )
 
 
@@ -557,9 +614,11 @@ async def create_booking(
         )
 
 
-@router.get("/", response_model=List[BookingResponse])
+@router.get("/", response_model=BookingListResponse)
 async def get_my_bookings(
     status_filter: Optional[str] = Query(None, description="Filter by booking status"),
+    page: Optional[int] = Query(None, ge=1, description="Page number for paginated results"),
+    page_size: Optional[int] = Query(None, ge=1, le=24, description="Page size for paginated results"),
     current_user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase_client),
 ):
@@ -567,69 +626,66 @@ async def get_my_bookings(
     Get all bookings for the current user.
     """
     user_id = current_user["id"]
+    should_paginate = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
     
     try:
+        local_count_query = supabase.table("booking").select("booking_id", count="exact").eq("user_id", user_id)
+        ext_count_query = supabase.table("external_bookings").select("external_booking_id", count="exact").eq("user_id", user_id)
+
+        if status_filter:
+            local_count_query = local_count_query.eq("status", status_filter)
+            ext_count_query = ext_count_query.eq("status", status_filter)
+
+        local_total_result = local_count_query.execute()
+        ext_total_result = ext_count_query.execute()
+        local_total = local_total_result.count or 0
+        external_total = ext_total_result.count or 0
+        total = local_total + external_total
+
+        effective_page_size = resolved_page_size if should_paginate else max(total, 1)
+        total_pages = max((total + effective_page_size - 1) // effective_page_size, 1)
+        current_page = min(resolved_page, total_pages) if should_paginate else 1
+        fetch_limit = current_page * resolved_page_size if should_paginate else total
+
         query = supabase.table("booking").select("*").eq("user_id", user_id)
-        
+        ext_query = supabase.table("external_bookings").select("*").eq("user_id", user_id)
+
         if status_filter:
             query = query.eq("status", status_filter)
-        
-        result = query.order("booking_date", desc=True).execute()
-        
-        bookings = []
-        for booking in result.data:
-            # Get trip details
-            trip_result = supabase.table("trips").select("*").eq("trip_id", booking["trip_id"]).execute()
-            trip = trip_result.data[0] if trip_result.data else None
-            
-            # Get agent name
-            agent_name = None
-            if trip:
-                agent_result = supabase.table("travel_agent").select("name").eq("agent_id", trip["agent_id"]).execute()
-                agent_name = agent_result.data[0].get("name") if agent_result.data else None
-            
-            bookings.append(BookingResponse(
-                booking_id=booking["booking_id"],
-                user_id=booking["user_id"],
-                trip_id=booking["trip_id"],
-                itinerary_id=booking.get("itinerary_id"),
-                booking_date=datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00")),
-                status=booking["status"],
-                number_of_seats=booking["number_of_seats"],
-                unit_price_at_booking=_resolve_unit_price(booking, trip),
-                total_price=Decimal(str(booking["total_price"])),
-                passenger_names=booking.get("passenger_names", []),
-                contact_email=booking["contact_email"],
-                contact_phone=booking["contact_phone"],
-                special_requests=booking.get("special_requests"),
-                booking_reference=booking["booking_reference"],
-                confirmed_at=datetime.fromisoformat(booking["confirmed_at"].replace("Z", "+00:00")) if booking.get("confirmed_at") else None,
-                cancelled_at=datetime.fromisoformat(booking["cancelled_at"].replace("Z", "+00:00")) if booking.get("cancelled_at") else None,
-                cancellation_reason=booking.get("cancellation_reason"),
-                refund_amount=Decimal(str(booking["refund_amount"])) if booking.get("refund_amount") else None,
-                updated_at=datetime.fromisoformat(booking.get("updated_at", booking["booking_date"]).replace("Z", "+00:00")),
-                trip={
-                    "trip_id": trip["trip_id"],
-                    "origin_city": trip["origin_city"],
-                    "destination_city": trip["destination_city"],
-                    "departure_time": trip["departure_time"],
-                    "arrival_time": trip["arrival_time"],
-                    "price": float(_resolve_unit_price(booking, trip)),
-                } if trip else None,
-                agent_name=agent_name,
-                booking_source="local",
-            ))
-
-        ext_query = supabase.table("external_bookings").select("*").eq("user_id", user_id)
-        if status_filter:
             ext_query = ext_query.eq("status", status_filter)
+
+        query = query.order("booking_date", desc=True)
+        ext_query = ext_query.order("booking_date", desc=True)
+
+        if fetch_limit > 0:
+            query = query.range(0, fetch_limit - 1)
+            ext_query = ext_query.range(0, fetch_limit - 1)
+
+        result = query.execute()
         ext_result = ext_query.execute()
+
+        bookings = [_local_booking_row_to_response(booking, supabase) for booking in result.data or []]
         for row in ext_result.data or []:
             offer = get_offer_by_provider_ref(row["provider_id"], row["external_ref"])
             bookings.append(_external_booking_row_to_response(row, offer))
 
         bookings.sort(key=lambda b: b.booking_date, reverse=True)
-        return bookings
+        if should_paginate:
+            start_index = (current_page - 1) * resolved_page_size
+            end_index = start_index + resolved_page_size
+            bookings = bookings[start_index:end_index]
+
+        return BookingListResponse(
+            bookings=bookings,
+            total=total,
+            page=current_page,
+            page_size=effective_page_size,
+            total_pages=total_pages,
+            has_next_page=current_page < total_pages,
+            has_previous_page=current_page > 1,
+        )
     
     except HTTPException:
         raise

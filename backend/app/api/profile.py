@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -150,6 +150,34 @@ class AgentProfileUpdateRequest(BaseModel):
     profile_details: Optional[Dict[str, Any]] = None
 
 
+class AgentDashboardStatsResponse(BaseModel):
+    total_revenue: float
+    total_bookings: int
+    active_listings: int
+    pending_inquiries: int
+
+
+class AgentDashboardChartPoint(BaseModel):
+    month: str
+    bookings: int
+
+
+class AgentDashboardRecentBooking(BaseModel):
+    booking_id: int
+    booking_reference: str
+    booking_date: datetime
+    status: str
+    trip_label: str
+    traveler_name: str
+    total_price: float
+
+
+class AgentDashboardResponse(BaseModel):
+    stats: AgentDashboardStatsResponse
+    bookings_by_month: List[AgentDashboardChartPoint]
+    recent_bookings: List[AgentDashboardRecentBooking]
+
+
 @router.get("/agent", response_model=AgentProfileResponse)
 async def get_agent_profile(
     current_user: dict = Depends(get_current_user),
@@ -190,6 +218,136 @@ async def get_agent_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching agent profile: {str(e)}",
+        )
+
+
+@router.get("/agent/dashboard", response_model=AgentDashboardResponse)
+async def get_agent_dashboard(
+    current_user: dict = Depends(get_current_user),
+    supabase=Depends(get_supabase_client),
+):
+    """Return live dashboard metrics for the current travel agent."""
+    user_id = current_user["id"]
+    try:
+        agent_res = (
+            supabase.table("travel_agent")
+            .select("agent_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not agent_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent profile not found for this user",
+            )
+
+        agent_id = agent_res.data[0]["agent_id"]
+        trips_res = (
+            supabase.table("trips")
+            .select("trip_id, origin_city, destination_city, available_seats")
+            .eq("agent_id", agent_id)
+            .execute()
+        )
+        trips = trips_res.data or []
+        trip_ids = [trip["trip_id"] for trip in trips]
+        trip_lookup = {
+            trip["trip_id"]: f"{trip['origin_city']} -> {trip['destination_city']}"
+            for trip in trips
+        }
+
+        bookings = []
+        if trip_ids:
+            bookings_res = (
+                supabase.table("booking")
+                .select("booking_id, trip_id, booking_reference, booking_date, status, total_price, contact_email, passenger_names")
+                .in_("trip_id", trip_ids)
+                .order("booking_date", desc=True)
+                .execute()
+            )
+            bookings = bookings_res.data or []
+
+        non_cancelled_bookings = [booking for booking in bookings if booking.get("status") != "cancelled"]
+        total_revenue = sum(float(booking.get("total_price") or 0) for booking in non_cancelled_bookings)
+        total_bookings = len(non_cancelled_bookings)
+        active_listings = sum(1 for trip in trips if (trip.get("available_seats") or 0) > 0)
+
+        pooling_res = (
+            supabase.table("bus_pooling_requests")
+            .select("request_id", count="exact")
+            .eq("target_agent_id", agent_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        pending_pooling = pooling_res.count or 0
+
+        unread_messages_res = (
+            supabase.table("agent_messages")
+            .select("message_id", count="exact")
+            .eq("receiver_agent_id", agent_id)
+            .eq("is_read", False)
+            .execute()
+        )
+        unread_messages = unread_messages_res.count or 0
+
+        now = datetime.now(timezone.utc)
+        month_starts: List[datetime] = []
+        for offset in range(5, -1, -1):
+            year = now.year
+            month = now.month - offset
+            while month <= 0:
+                month += 12
+                year -= 1
+            month_starts.append(datetime(year, month, 1, tzinfo=timezone.utc))
+
+        bookings_by_month_lookup = {
+            (month_start.year, month_start.month): 0
+            for month_start in month_starts
+        }
+        for booking in non_cancelled_bookings:
+            booking_date = datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00"))
+            key = (booking_date.year, booking_date.month)
+            if key in bookings_by_month_lookup:
+                bookings_by_month_lookup[key] += 1
+
+        recent_bookings = []
+        for booking in non_cancelled_bookings[:5]:
+            passenger_names = booking.get("passenger_names") or []
+            traveler_name = passenger_names[0] if passenger_names else (booking.get("contact_email") or "Traveler")
+            recent_bookings.append(
+                AgentDashboardRecentBooking(
+                    booking_id=booking["booking_id"],
+                    booking_reference=booking["booking_reference"],
+                    booking_date=datetime.fromisoformat(booking["booking_date"].replace("Z", "+00:00")),
+                    status=str(booking.get("status") or "unknown"),
+                    trip_label=trip_lookup.get(booking["trip_id"], f"Trip #{booking['trip_id']}"),
+                    traveler_name=traveler_name,
+                    total_price=float(booking.get("total_price") or 0),
+                )
+            )
+
+        return AgentDashboardResponse(
+            stats=AgentDashboardStatsResponse(
+                total_revenue=total_revenue,
+                total_bookings=total_bookings,
+                active_listings=active_listings,
+                pending_inquiries=pending_pooling + unread_messages,
+            ),
+            bookings_by_month=[
+                AgentDashboardChartPoint(
+                    month=month_start.strftime("%b"),
+                    bookings=bookings_by_month_lookup[(month_start.year, month_start.month)],
+                )
+                for month_start in month_starts
+            ],
+            recent_bookings=recent_bookings,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching agent dashboard: {str(e)}",
         )
 
 

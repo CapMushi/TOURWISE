@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getUserProfile, updateUserProfile } from "@/lib/api";
+import { Camera } from "lucide-react";
+import { getUserProfile, updateUserProfile, uploadProfileImage } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,6 +39,7 @@ export default function Profile() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedStyles, setSelectedStyles] = useState<string[]>(["Adventure", "Cultural"]);
   const [budget, setBudget] = useState("Mid-Range");
   const [intentText, setIntentText] = useState("");
@@ -51,6 +53,10 @@ export default function Profile() {
 
   const displayEmail = profile?.email ?? user?.email ?? "";
   const displayName = profile?.username?.trim() || user?.email?.split("@")[0] || "Traveler";
+  const avatarUrl =
+    profile?.profile_details && typeof profile.profile_details === "object"
+      ? ((profile.profile_details as Record<string, unknown>).avatar_url as string | undefined)
+      : undefined;
 
   useEffect(() => {
     const prefs = profile?.preferences;
@@ -113,8 +119,57 @@ export default function Profile() {
     },
   });
 
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!user?.id) {
+        throw new Error("You must be logged in to upload a profile photo.");
+      }
+
+      const uploadedUrl = await uploadProfileImage(file, user.id, "traveler");
+      const currentDetails =
+        profile?.profile_details && typeof profile.profile_details === "object"
+          ? (profile.profile_details as Record<string, unknown>)
+          : {};
+
+      return updateUserProfile({
+        profile_details: {
+          ...currentDetails,
+          avatar_url: uploadedUrl,
+        },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast({ title: "Photo updated", description: "Your profile picture has been uploaded." });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Could not upload your profile picture.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handlePhotoSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid file",
+        description: "Please choose an image file.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    uploadPhotoMutation.mutate(file);
+  };
+
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
       <h1 className="font-heading text-4xl font-bold text-heading mb-8">My Profile</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -133,7 +188,7 @@ export default function Profile() {
               ) : (
                 <div className="flex flex-col items-center space-y-4">
                   <Avatar className="h-24 w-24">
-                    <AvatarImage src="/placeholder.svg" alt="Profile picture" />
+                    <AvatarImage src={avatarUrl} alt="Profile picture" />
                     <AvatarFallback className="text-2xl font-heading bg-primary text-primary-foreground">
                       {initialsFromUser(profile?.username, displayEmail)}
                     </AvatarFallback>
@@ -142,6 +197,23 @@ export default function Profile() {
                     <h3 className="font-heading font-bold text-xl text-heading">{displayName}</h3>
                     <p className="text-body-text">{displayEmail}</p>
                   </div>
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handlePhotoSelected}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={uploadPhotoMutation.isPending}
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    {uploadPhotoMutation.isPending ? "Uploading photo..." : "Upload Profile Photo"}
+                  </Button>
                 </div>
               )}
               <Button variant="secondary" className="w-full" onClick={() => navigate("/profile/edit")}>

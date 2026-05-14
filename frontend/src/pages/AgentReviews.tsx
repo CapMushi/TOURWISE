@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -67,8 +68,6 @@ function StarRating({
 function verificationBadge(status?: string | null) {
   switch (status) {
     case "approved":
-    case "active":
-    case "verified":
       return (
         <Badge className="bg-green-500 text-white gap-1">
           <Shield className="h-3 w-3" /> Verified
@@ -86,6 +85,7 @@ function verificationBadge(status?: string | null) {
 export default function AgentReviews() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [rating, setRating] = useState<number>(5);
@@ -272,7 +272,17 @@ export default function AgentReviews() {
                           </div>
                         )}
                       </div>
-                      {verificationBadge(selectedAgent.verification_status)}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => navigate(`/agents/${selectedAgent.agent_id}`)}
+                        >
+                          Open Public Profile
+                        </Button>
+                        {verificationBadge(selectedAgent.verification_status)}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground">

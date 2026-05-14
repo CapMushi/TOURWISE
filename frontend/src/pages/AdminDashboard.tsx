@@ -1,15 +1,18 @@
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, UserCheck, Briefcase } from "lucide-react";
-
-const recentActivity = [
-  { id: 1, text: "New user signup: John Doe", time: "2 minutes ago" },
-  { id: 2, text: "Agent 'TravelCo' added a new trip", time: "15 minutes ago" },
-  { id: 3, text: "Agent verification request: Jane Smith", time: "1 hour ago" },
-  { id: 4, text: "New user signup: Sarah Johnson", time: "2 hours ago" },
-  { id: 5, text: "Trip 'Mountain Retreat' fully booked", time: "3 hours ago" },
-];
+import { getAdminDashboard } from "@/lib/api";
 
 export default function AdminDashboard() {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["admin-dashboard"],
+    queryFn: getAdminDashboard,
+    refetchInterval: 30_000,
+  });
+
+  const stats = data?.stats;
+  const recentActivity = data?.recent_activity ?? [];
+
   return (
     <div className="p-8 space-y-8">
       <div>
@@ -25,8 +28,10 @@ export default function AdminDashboard() {
             <Users className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-heading">2,847</div>
-            <p className="text-xs text-muted-foreground mt-1">Travelers & Agents combined</p>
+            <div className="text-3xl font-bold text-heading">
+              {isLoading ? "..." : stats?.total_users ?? 0}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Live count from registered profiles</p>
           </CardContent>
         </Card>
 
@@ -36,7 +41,9 @@ export default function AdminDashboard() {
             <UserCheck className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-heading">12</div>
+            <div className="text-3xl font-bold text-heading">
+              {isLoading ? "..." : stats?.pending_verifications ?? 0}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">Agent applications waiting</p>
           </CardContent>
         </Card>
@@ -47,8 +54,10 @@ export default function AdminDashboard() {
             <Briefcase className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-heading">156</div>
-            <p className="text-xs text-muted-foreground mt-1">Currently available on platform</p>
+            <div className="text-3xl font-bold text-heading">
+              {isLoading ? "..." : stats?.active_trips ?? 0}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Trips with seats currently available</p>
           </CardContent>
         </Card>
       </div>
@@ -59,14 +68,22 @@ export default function AdminDashboard() {
           <CardTitle className="text-heading font-heading">Recent Activity</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {recentActivity.map((activity) => (
-              <div key={activity.id} className="flex items-start justify-between border-b border-border/50 pb-3 last:border-0 last:pb-0">
-                <p className="text-sm text-body-text">{activity.text}</p>
-                <span className="text-xs text-muted-foreground whitespace-nowrap ml-4">{activity.time}</span>
-              </div>
-            ))}
-          </div>
+          {isError ? (
+            <p className="text-sm text-destructive">
+              {error instanceof Error ? error.message : "Failed to load dashboard activity."}
+            </p>
+          ) : recentActivity.length === 0 && !isLoading ? (
+            <p className="text-sm text-muted-foreground">No recent admin activity yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {recentActivity.map((activity) => (
+                <div key={activity.id} className="flex items-start justify-between border-b border-border/50 pb-3 last:border-0 last:pb-0">
+                  <p className="text-sm text-body-text">{activity.text}</p>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap ml-4">{activity.time}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

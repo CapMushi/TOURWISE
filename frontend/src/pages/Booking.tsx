@@ -6,13 +6,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Minus, Plus, AlertCircle, Loader2 } from "lucide-react";
+import { Minus, Plus, AlertCircle, Loader2, ShieldCheck, CalendarDays, UsersRound } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getTripById, createBooking, type CreateBookingRequest, type PassengerInfo } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { formatPkr } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
+import { format } from "date-fns";
 
 export default function Booking() {
   const navigate = useNavigate();
@@ -194,6 +195,9 @@ export default function Booking() {
   const availableSeats = trip.available_seats || 0;
   const pricePerSeat = parseFloat(trip.price.toString());
   const totalPrice = seats * pricePerSeat;
+  const departureDate = new Date(trip.departure_time);
+  const arrivalDate = new Date(trip.arrival_time);
+  const isExternal = trip.source === "external";
 
   if (availableSeats === 0) {
     return (
@@ -228,6 +232,36 @@ export default function Booking() {
           </p>
         </div>
 
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="glass-card p-4">
+            <div className="mb-2 flex items-center gap-2 text-heading">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <span className="font-medium">Book with clearer expectations</span>
+            </div>
+            <p className="text-sm text-body-text">
+              This checkout uses the live route, schedule, and seat count shown on the listing page.
+            </p>
+          </div>
+          <div className="glass-card p-4">
+            <div className="mb-2 flex items-center gap-2 text-heading">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              <span className="font-medium">Travel timing</span>
+            </div>
+            <p className="text-sm text-body-text">
+              {format(departureDate, "MMM dd, yyyy h:mm a")} to {format(arrivalDate, "MMM dd, yyyy h:mm a")}
+            </p>
+          </div>
+          <div className="glass-card p-4">
+            <div className="mb-2 flex items-center gap-2 text-heading">
+              <UsersRound className="h-4 w-4 text-primary" />
+              <span className="font-medium">Live availability</span>
+            </div>
+            <p className="text-sm text-body-text">
+              {availableSeats} seat{availableSeats === 1 ? "" : "s"} open right now.
+            </p>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Trip Summary */}
           <Card className="glass-card border-0">
@@ -239,6 +273,18 @@ export default function Booking() {
                 <span className="text-body-text">Route:</span>
                 <span className="font-medium">{trip.origin_city} → {trip.destination_city}</span>
               </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-body-text">Departure:</span>
+                <span className="font-medium text-right">{format(departureDate, "PPp")}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-body-text">Arrival:</span>
+                <span className="font-medium text-right">{format(arrivalDate, "PPp")}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-body-text">Transport:</span>
+                <span className="font-medium capitalize">{trip.transport_type.replace("_", " ")}</span>
+              </div>
               <div className="flex justify-between">
                 <span className="text-body-text">Price per person (PKR):</span>
                 <span className="font-medium">{formatPkr(pricePerSeat)}</span>
@@ -246,6 +292,11 @@ export default function Booking() {
               <div className="flex justify-between">
                 <span className="text-body-text">Available Seats:</span>
                 <span className="font-medium text-accent">{availableSeats} Seats</span>
+              </div>
+              <div className="rounded-xl border border-border bg-background/40 p-3 text-sm text-body-text">
+                {isExternal
+                  ? "This is a partner-managed trip. Booking is still placed through TourWise."
+                  : "This trip is listed by a TourWise travel agent and booked inside TourWise."}
               </div>
             </CardContent>
           </Card>
@@ -290,6 +341,12 @@ export default function Booking() {
               <CardTitle className="font-heading text-xl">Contact Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <Alert>
+                <AlertDescription>
+                  These details are used for your booking confirmation and shared only where needed to fulfill
+                  the trip.
+                </AlertDescription>
+              </Alert>
               <div>
                 <Label htmlFor="contact_email">Email *</Label>
                 <Input
@@ -442,8 +499,12 @@ export default function Booking() {
                 <span className="text-2xl font-bold text-primary">{formatPkr(totalPrice)}</span>
               </div>
               <p className="text-sm text-body-text">
-                Payment will be processed automatically upon confirmation.
+                You are confirming traveler details, seat count, and the current listed price shown above.
               </p>
+              <div className="rounded-xl border border-border bg-background/40 p-3 text-sm text-body-text">
+                Special requests are passed to the organizer, but they should be treated as requests until the
+                trip operator confirms they can accommodate them.
+              </div>
             </CardContent>
           </Card>
 
@@ -470,7 +531,7 @@ export default function Booking() {
                   Processing...
                 </>
               ) : (
-                "Pay Now & Confirm Booking"
+                "Confirm Booking"
               )}
             </Button>
           </div>

@@ -29,6 +29,7 @@ The TourWise platform uses Supabase (PostgreSQL) with the following main tables:
 - `bus_pooling_requests` - Bus pooling requests between travel agents
 - `agent_messages` - Messages between travel agents
 - `favorites` - User wishlist/favorites for trips
+- `trip_reviews` - Traveler-authored reviews/ratings for individual booked trips
 - `notification_preferences` - User-level notification channel and category settings
 - `trip_images` - Multi-image gallery for trips
 - `trip_categories`, `trip_tags` - Classification metadata for trips
@@ -66,17 +67,19 @@ FastAPI routers under `backend/app/api/` exercise these Supabase tables today:
 
 | Router | Tables |
 |--------|--------|
-| `auth.py`, `profile.py` | `travel_agent`, `profiles` |
+| `auth.py` | `travel_agent`, `profiles`, `user_admin_roles` |
+| `profile.py` | `travel_agent`, `profiles`, `trips`, `booking`, `bus_pooling_requests`, `agent_messages` |
+| `admin.py` | `profiles`, `travel_agent`, `trips`, `booking`, `admin_roles`, `user_admin_roles` |
 | `trips.py` | `trips`, `travel_agent` (join), `trip_images`; merged list includes external offers from `app.integrations` (no `trips` row) |
 | `bookings.py` | `booking`, `trips`, `booking_passengers`, `payments`, `travel_agent`, `booking_notifications`, `external_bookings`, `external_booking_passengers`, `external_payments` |
 | `favorites.py` | `favorites`, `trips` |
 | `collaboration.py` | `travel_agent`, `trips`, `bus_pooling_requests`, `agent_messages`, `booking` |
-| `reviews.py` | `travel_agent`, `profiles`, `agent_reviews` |
+| `reviews.py` | `travel_agent`, `profiles`, `agent_reviews`, `trip_reviews`, `trips`, `booking` |
 | `notification_preferences.py` | `notification_preferences` |
 | `notifications.py` | `booking_notifications` |
 | `integrations.py` | (read-only adapters; no direct Supabase tables) |
 
-SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `optional_profiles_trigger.sql`, `external_integrations_phase1.sql` (external SIL tables — run in Supabase SQL Editor).
+SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `storage_profile_images_bucket.sql`, `admin_roles_phase1.sql`, `trip_reviews_phase1.sql`, `optional_profiles_trigger.sql`, `external_integrations_phase1.sql` (external SIL tables — run in Supabase SQL Editor).
 
 **Maintenance:** When adding or changing `supabase.table(...)` usage in `backend/app/api/`, extend `backend/supabase/schema_reference.sql` using its existing comment-block style. When the actual database gains tables, columns, or relationships, update this `database-schema.mdc` file as well.
 
@@ -87,7 +90,6 @@ SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `
 These are documented for roadmap alignment only and are **not part of current runtime behavior** unless corresponding migrations and API changes are applied.
 
 - `booking.unit_price_at_booking` (numeric) for immutable per-seat price snapshot.
-- `agent_reviews` table for traveler-to-agent rating/comments.
 - `bus_services` and `trip_bus_resources` tables for DB-backed resource inventory.
 - `trips.is_tour_package` (boolean) if tour-package labeling is moved to backend persistence.
 
@@ -101,7 +103,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `id` (uuid, PRIMARY KEY) - Links directly to `auth.users.id` (Supabase Auth)
 - `username` (text) - User's display name
 - `preferences` (jsonb) - User-specific settings/preferences (flexible JSON)
-- `profile_details` (jsonb) - Additional profile data (flexible JSON)
+- `profile_details` (jsonb) - Additional profile data (flexible JSON, e.g. `avatar_url`)
 - `updated_at` (timestamptz) - Last update timestamp
 
 **Relationships:**
@@ -126,9 +128,9 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `user_id` (uuid, FOREIGN KEY) - References `profiles.id` or `auth.users.id`
 - `name` (text) - Agent's business/display name
 - `email` (text) - Agent's contact email
-- `verification_status` (verification_status_enum) - Agent verification status (commonly: 'pending', 'approved', 'active', 'rejected', 'verified')
+- `verification_status` (verification_status_enum) - Agent verification status (currently observed: 'pending', 'approved', 'rejected')
 - `contact_info` (jsonb) - Agent contact details (phone, address, etc.)
-- `profile_details` (jsonb) - Additional agent-specific profile data
+- `profile_details` (jsonb) - Additional agent-specific profile data (e.g. `bio`, `avatar_url`)
 - `created_at` (timestamptz) - Account creation timestamp
 - `rating` (numeric) - Agent's rating (e.g., 1-5, 1-10)
 - `numberofreviews` (int4) - Number of reviews received by the agent
@@ -191,6 +193,32 @@ These are documented for roadmap alignment only and are **not part of current ru
 **Key Notes:**
 - Commonly constrained to one review per (`agent_id`, `user_id`) via unique index
 - Aggregate values in `travel_agent.rating` and `travel_agent.numberofreviews` are typically maintained from this table
+
+---
+
+## Table: `trip_reviews`
+
+**Purpose:** Traveler-authored reviews/ratings for individual trips the traveler has booked.
+
+**Columns:**
+- `review_id` (int8, PRIMARY KEY) - Auto-incrementing review identifier
+- `trip_id` (int8, FOREIGN KEY) - References `trips.trip_id`
+- `agent_id` (int8, FOREIGN KEY, nullable) - References `travel_agent.agent_id`
+- `user_id` (uuid, FOREIGN KEY) - References `profiles.id`
+- `rating` (numeric) - Review rating value (typically 1.0 to 5.0)
+- `comment` (text, nullable) - Optional written feedback
+- `created_at` (timestamptz) - Review creation timestamp
+- `updated_at` (timestamptz) - Last review update timestamp
+
+**Relationships:**
+- `trip_id` → `trips.trip_id` (many-to-one)
+- `agent_id` → `travel_agent.agent_id` (many-to-one, nullable helper/snapshot)
+- `user_id` → `profiles.id` (many-to-one)
+
+**Key Notes:**
+- Commonly constrained to one review per (`trip_id`, `user_id`) via unique index
+- Current API logic allows reviewing only trips the traveler has booked
+- The frontend uses this table for trip-detail review cards and traveler-submitted trip feedback
 
 ---
 
@@ -704,6 +732,10 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `audit_logs.actor_user_id` → `profiles.id` (nullable)
 - `audit_logs.actor_agent_id` → `travel_agent.agent_id` (nullable)
 
+**Key Notes:**
+- Admin access in the current application is granted by the presence of any row in `user_admin_roles` for the authenticated user.
+- Observed `admin_roles.role_name` values in the active SQL setup are `super_admin`, `support_admin`, `content_admin`, and `finance_admin`.
+
 ---
 
 ## Table: `waitlist_entries`
@@ -838,7 +870,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `itinerary_status_enum` - Itinerary statuses
 - `booking_status_enum` - Booking statuses
 - `service_type_enum` - Transportation/service categories (used in `trips.transport_type`)
-- `verification_status_enum` - Agent verification statuses (commonly includes 'pending', 'approved', 'active', 'rejected', 'verified')
+- `verification_status_enum` - Agent verification statuses currently used by the running schema: `pending`, `approved`, `rejected`
 - `suitability_enum` - Suitability categories (used in `trips.suitability`, e.g., 'Solo Travelers', 'Families', 'Couples')
 - `pooling_status_enum` - Bus pooling request statuses: 'pending', 'approved', 'rejected', 'active', 'completed', 'cancelled'
 - `waitlist_status_enum` - Waitlist lifecycle statuses: 'waiting', 'notified', 'accepted', 'expired', 'cancelled'

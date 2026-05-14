@@ -71,6 +71,55 @@ All colors MUST be HSL.
     --glass-blur: 16px;
     --glass-border-opacity: 0.3;
   }
+
+  .dark {
+    --background: 222 47% 9%;
+    --foreground: 210 40% 96%;
+
+    --glass: 223 47% 13%;
+    --glass-border: 215 28% 30%;
+
+    --card: 222 39% 11%;
+    --card-foreground: 210 40% 96%;
+
+    --popover: 222 39% 11%;
+    --popover-foreground: 210 40% 96%;
+
+    --primary: 239 84% 68%;
+    --primary-foreground: 222 47% 11%;
+    --primary-hover: 239 84% 74%;
+    --primary-active: 239 84% 60%;
+
+    --secondary: 294 70% 68%;
+    --secondary-foreground: 222 47% 11%;
+    --secondary-hover: 294 70% 74%;
+    --secondary-active: 294 70% 60%;
+
+    --accent: 173 75% 45%;
+    --accent-foreground: 222 47% 11%;
+
+    --muted: 222 25% 16%;
+    --muted-foreground: 215 20% 72%;
+
+    --heading: 210 40% 96%;
+    --body-text: 215 20% 78%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 19% 24%;
+    --input: 217 19% 24%;
+    --ring: 239 84% 68%;
+
+    --sidebar-background: 231 48% 17%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 239 84% 68%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 231 40% 24%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 231 35% 28%;
+    --sidebar-ring: 173 75% 45%;
+  }
 }
 
 @layer base {
@@ -80,8 +129,13 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-body-text font-sans antialiased;
-    background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(210 40% 96%) 100%);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--background)) 0%,
+      hsl(var(--muted)) 100%
+    );
     min-height: 100vh;
+    transition: background 0.2s ease, color 0.2s ease;
   }
 
   h1, h2, h3, h4, h5, h6 {

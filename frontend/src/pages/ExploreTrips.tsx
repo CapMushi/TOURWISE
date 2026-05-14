@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Compass, Search } from "lucide-react";
@@ -8,15 +9,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Footer } from "@/components/layout/Footer";
 import heroImage from "@/assets/hero-tropical.jpg";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TRIP_SORT_OPTIONS, sortTrips, type TripSortOption } from "@/lib/tripSort";
 
 export default function ExploreTrips() {
   const navigate = useNavigate();
+  const [sortBy, setSortBy] = useState<TripSortOption>("recommended");
   const { data, isLoading, error } = useQuery({
     queryKey: ["explore-trips"],
     queryFn: () => getTrips(),
   });
 
   const trips = data?.trips ?? [];
+  const sortedTrips = useMemo(() => sortTrips(trips, sortBy), [trips, sortBy]);
 
   return (
     <div className="min-h-screen">
@@ -52,6 +57,32 @@ export default function ExploreTrips() {
           </Alert>
         )}
 
+        {!isLoading && trips.length > 0 && (
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-heading font-bold text-heading">Available listings</h2>
+              <p className="text-sm text-body-text">
+                {sortedTrips.length} {sortedTrips.length === 1 ? "trip" : "trips"} ready to explore
+              </p>
+            </div>
+            <div className="w-full sm:w-[240px]">
+              <p className="mb-2 text-sm font-medium text-heading">Sort trips</p>
+              <Select value={sortBy} onValueChange={(value: TripSortOption) => setSortBy(value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRIP_SORT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+
         {isLoading && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -60,15 +91,15 @@ export default function ExploreTrips() {
           </div>
         )}
 
-        {!isLoading && trips.length === 0 && (
+        {!isLoading && sortedTrips.length === 0 && (
           <div className="glass-card p-12 text-center text-body-text">
             No trips are available yet. Try again later or become a travel agent to add listings.
           </div>
         )}
 
-        {!isLoading && trips.length > 0 && (
+        {!isLoading && sortedTrips.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {trips.map((trip) => (
+            {sortedTrips.map((trip) => (
               <TripCardFlexible
                 key={trip.trip_id}
                 trip={trip}
