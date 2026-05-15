@@ -79,7 +79,7 @@ FastAPI routers under `backend/app/api/` exercise these Supabase tables today:
 | `notifications.py` | `booking_notifications` |
 | `integrations.py` | (read-only adapters; no direct Supabase tables) |
 
-SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `storage_profile_images_bucket.sql`, `admin_roles_phase1.sql`, `trip_reviews_phase1.sql`, `optional_profiles_trigger.sql`, `external_integrations_phase1.sql` (external SIL tables — run in Supabase SQL Editor).
+SQL snippets checked into `backend/supabase/` (not an exhaustive schema dump): `schema_reference.sql` (columns/tables the FastAPI layer touches), `add_trips_image_url.sql`, `storage_trip_images_bucket.sql`, `storage_profile_images_bucket.sql`, `admin_roles_phase1.sql`, `trip_reviews_phase1.sql`, `optional_profiles_trigger.sql`, `external_integrations_phase1.sql` (external SIL tables — run in Supabase SQL Editor), `trip_bundles_phase1.sql` (adds `trips.member_trip_ids`, aggregate recompute trigger, and bundle-member delete guard).
 
 **Maintenance:** When adding or changing `supabase.table(...)` usage in `backend/app/api/`, extend `backend/supabase/schema_reference.sql` using its existing comment-block style. When the actual database gains tables, columns, or relationships, update this `database-schema.mdc` file as well.
 
@@ -92,6 +92,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `booking.unit_price_at_booking` (numeric) for immutable per-seat price snapshot.
 - `bus_services` and `trip_bus_resources` tables for DB-backed resource inventory.
 - `trips.is_tour_package` (boolean) if tour-package labeling is moved to backend persistence.
+- `trips.member_trip_ids` (bigint[]) for the Trip Bundles feature — see Phase 1 below; documented as active once `trip_bundles_phase1.sql` has been applied to the database.
 
 ---
 
@@ -242,6 +243,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `suitability` (suitability_enum) - Suitability for different traveler types (e.g., 'Solo Travelers', 'Families', 'Couples')
 - `image_url` (text, nullable) - Public URL for main trip image (e.g. Supabase Storage); PostgreSQL `comment on column` matches this wording. Apply with `alter table public.trips add column if not exists image_url text;` — see `backend/supabase/add_trips_image_url.sql`. If PostgREST returns `PGRST204` for `image_url`, reload the API schema in the Supabase dashboard after migrating.
 - `is_tour_package` (boolean, nullable by legacy / commonly default false in additive migration) - Optional marker used for “Tour Package” highlighting in trip cards
+- `member_trip_ids` (bigint[], NOT NULL, default `'{}'`) - Ordered list of member `trip_id`s that compose this row. Empty array = ordinary single trip. Non-empty = bundle anchor; `is_tour_package` is `true` in that case and the row's `price`, `total_seats`, `available_seats`, `origin_city`, `destination_city`, `destination_province`, `departure_time`, and `arrival_time` are derived from the members (sum / min / first-leg / last-leg). See `backend/supabase/trip_bundles_phase1.sql` and `.cursor/rules/trip-bundles-plan.mdc`. GIN-indexed via `idx_trips_member_trip_ids`.
 - `origin_lat` (numeric(9,6), nullable) - Optional origin latitude (-90 to 90)
 - `origin_lng` (numeric(9,6), nullable) - Optional origin longitude (-180 to 180)
 - `destination_lat` (numeric(9,6), nullable) - Optional destination latitude (-90 to 90)
@@ -265,6 +267,7 @@ These are documented for roadmap alignment only and are **not part of current ru
 - `image_url` stores the public URL of the trip’s primary image (usually from Supabase Storage); optional until an image is uploaded
 - **API alignment:** `PATCH /api/trips/{trip_id}` in this codebase only persists `image_url`. Additional images use `trip_images`; when an image row is created with `is_cover = true`, the backend also writes that URL to `trips.image_url` for backwards compatibility.
 - Coordinates support map/radius and geospatial-style filtering use cases
+- **Bundle anchors:** When `member_trip_ids` is non-empty the row is a Trip Bundle anchor. Booking such a row decrements `available_seats` on every member trip and on the anchor itself in one transaction (Phase 2 of the bundles plan). Two database-side triggers (created by `trip_bundles_phase1.sql`) enforce consistency: `trg_member_trip_aggregates` recomputes the anchor's aggregated fields when any member trip's `price`, `total_seats`, `available_seats`, `origin_city`, `destination_city`, `destination_province`, `departure_time`, or `arrival_time` changes; `trg_member_trip_delete_guard` blocks deletion of any trip that is referenced in another row's `member_trip_ids`. Bundle members must all be owned by the same agent as the anchor (enforced by the API).
 
 ---
 

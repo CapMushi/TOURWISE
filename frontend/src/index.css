@@ -164,3 +164,30 @@ All colors MUST be HSL.
     @apply bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent;
   }
 }
+
+/* ---------- Bundle route map (leaflet) ---------- */
+/* Animate the dashed polyline so the route appears to flow forward. */
+.bundle-route-flowline {
+  animation: bundle-route-flow 1.2s linear infinite;
+}
+
+@keyframes bundle-route-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* Drop leaflet's default white-square frame around our custom DivIcon pins. */
+.leaflet-div-icon.bundle-route-pin,
+.bundle-route-pin {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Tighten the popup typography to match our card style. */
+.leaflet-popup-content-wrapper {
+  border-radius: 0.75rem;
+}
+.leaflet-popup-content {
+  margin: 0.5rem 0.75rem;
+}

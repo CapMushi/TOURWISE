@@ -63,6 +63,8 @@ class TripResponse(BaseModel):
     is_tour_package: Optional[bool] = None
     suitability: Optional[str] = None
     image_gallery: List[str] = []
+    # Trip bundles (Phase 2): ordered member trip_ids when this row is a bundle anchor
+    member_trip_ids: List[int] = Field(default_factory=list)
     # Service integration layer (local vs external)
     source: str = "local"
     provider_id: Optional[str] = None
@@ -374,6 +376,7 @@ def get_trips(
                 is_tour_package=trip_data.get("is_tour_package"),
                 suitability=trip_data.get("suitability"),
                 image_gallery=images_map.get(trip_data["trip_id"], []),
+                member_trip_ids=trip_data.get("member_trip_ids") or [],
             )
             trips.append(trip)
 
@@ -463,6 +466,7 @@ def get_my_trips(
                 is_tour_package=trip_data.get("is_tour_package"),
                 suitability=trip_data.get("suitability"),
                 image_gallery=images_map.get(trip_data["trip_id"], []),
+                member_trip_ids=trip_data.get("member_trip_ids") or [],
                 collaborator_count=collab_counts.get(trip_data["trip_id"], 0),
             )
             trips.append(trip)
@@ -562,6 +566,7 @@ def create_trip(
             is_tour_package=created_trip.get("is_tour_package"),
             suitability=created_trip.get("suitability"),
             image_gallery=images_map.get(created_trip["trip_id"], []),
+            member_trip_ids=created_trip.get("member_trip_ids") or [],
         )
 
     except Exception as e:
@@ -639,6 +644,7 @@ def get_trip_by_id(
             is_tour_package=trip_data.get("is_tour_package"),
             suitability=trip_data.get("suitability"),
             image_gallery=images_map.get(trip_id, []),
+            member_trip_ids=trip_data.get("member_trip_ids") or [],
         )
     
     except HTTPException:
@@ -847,6 +853,7 @@ def update_trip(
             is_tour_package=updated_trip.get("is_tour_package"),
             suitability=updated_trip.get("suitability"),
             image_gallery=images_map.get(trip_id, []),
+            member_trip_ids=updated_trip.get("member_trip_ids") or [],
         )
     
     except HTTPException:
@@ -858,4 +865,371 @@ def update_trip(
             detail=f"Failed to update trip: {str(e)}",
         )
 
+
+# ============================================================================
+# Trip Bundles (Phase 2)
+# ----------------------------------------------------------------------------
+# A "bundle anchor" is a normal trips row with member_trip_ids populated.
+# Bookings on the anchor fan out to every member trip (see bookings.py).
+# All validation rules live in `_validate_bundle_chain`.
+# ============================================================================
+
+
+class CreateBundleRequest(BaseModel):
+    member_trip_ids: List[int] = Field(
+        ..., min_length=2, description="Ordered trip_ids that make up the tour, leg 1 first"
+    )
+
+
+class UpdateBundleRequest(BaseModel):
+    member_trip_ids: List[int] = Field(..., min_length=2)
+
+
+def _row_to_trip_response(
+    trip_data: dict,
+    images_map: dict,
+    agent_name: Optional[str] = None,
+) -> TripResponse:
+    return TripResponse(
+        trip_id=trip_data["trip_id"],
+        agent_id=trip_data["agent_id"],
+        origin_city=trip_data["origin_city"],
+        destination_province=trip_data["destination_province"],
+        destination_city=trip_data["destination_city"],
+        departure_time=datetime.fromisoformat(trip_data["departure_time"].replace("Z", "+00:00")),
+        arrival_time=datetime.fromisoformat(trip_data["arrival_time"].replace("Z", "+00:00")),
+        price=Decimal(str(trip_data["price"])),
+        transport_type=trip_data["transport_type"],
+        total_seats=trip_data["total_seats"],
+        available_seats=trip_data["available_seats"],
+        created_at=datetime.fromisoformat(trip_data["created_at"].replace("Z", "+00:00")),
+        agent_name=agent_name,
+        image_url=trip_data.get("image_url")
+        or (images_map.get(trip_data["trip_id"], [None])[0]),
+        is_tour_package=trip_data.get("is_tour_package"),
+        suitability=trip_data.get("suitability"),
+        image_gallery=images_map.get(trip_data["trip_id"], []),
+        member_trip_ids=trip_data.get("member_trip_ids") or [],
+    )
+
+
+def _validate_bundle_chain(legs: List[dict], current_agent_id: int) -> None:
+    """
+    Enforce the 7 chain validation rules from trip-bundles-plan.mdc.
+
+    Raises HTTPException on failure. Caller is responsible for ordering `legs`
+    to match the requested member_trip_ids order.
+    """
+    if len(legs) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A bundle must contain at least 2 trips.",
+        )
+
+    # Rule 2: ownership
+    for leg in legs:
+        if leg.get("agent_id") != current_agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Trip {leg.get('trip_id')} does not belong to you.",
+            )
+
+    # Rule 7: no nested bundles
+    for leg in legs:
+        if leg.get("member_trip_ids"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Trip {leg['trip_id']} is itself a bundle anchor; nesting is not allowed.",
+            )
+
+    # Rule 6: every leg has at least one available seat
+    for leg in legs:
+        if (leg.get("available_seats") or 0) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Trip {leg['trip_id']} has no available seats.",
+            )
+
+    seen_edges: set[tuple[str, str]] = set()
+    for i, leg in enumerate(legs):
+        origin = (leg.get("origin_city") or "").strip()
+        dest = (leg.get("destination_city") or "").strip()
+        edge = (origin.lower(), dest.lower())
+
+        # Rule 4: directed-edge uniqueness
+        if edge in seen_edges:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate route {origin} → {dest} in the bundle.",
+            )
+        seen_edges.add(edge)
+
+        if i == 0:
+            continue
+
+        prev = legs[i - 1]
+        prev_dest = (prev.get("destination_city") or "").strip().lower()
+
+        # Rule 3: continuity (destination of leg i-1 == origin of leg i)
+        if prev_dest != origin.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Chain breaks at leg {i + 1}: previous leg ended in "
+                    f"{prev.get('destination_city')} but this leg starts in {origin}."
+                ),
+            )
+
+        # Rule 5: temporal feasibility (no time travel)
+        prev_arrival = datetime.fromisoformat(
+            prev["arrival_time"].replace("Z", "+00:00")
+        )
+        this_departure = datetime.fromisoformat(
+            leg["departure_time"].replace("Z", "+00:00")
+        )
+        if this_departure < prev_arrival:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Leg {i + 1} departs before leg {i} arrives "
+                    f"({this_departure.isoformat()} < {prev_arrival.isoformat()})."
+                ),
+            )
+
+
+def _load_ordered_member_trips(
+    supabase, member_trip_ids: List[int]
+) -> List[dict]:
+    """Fetch trips by ids and return them ordered to match member_trip_ids."""
+    if not member_trip_ids:
+        return []
+    result = (
+        supabase.table("trips").select("*").in_("trip_id", member_trip_ids).execute()
+    )
+    by_id = {row["trip_id"]: row for row in (result.data or [])}
+    missing = [tid for tid in member_trip_ids if tid not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip(s) not found: {missing}",
+        )
+    return [by_id[tid] for tid in member_trip_ids]
+
+
+def _resolve_current_agent_id(supabase, user_id: str) -> int:
+    agent_result = (
+        supabase.table("travel_agent").select("agent_id").eq("user_id", user_id).execute()
+    )
+    if not agent_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not a registered travel agent.",
+        )
+    return agent_result.data[0]["agent_id"]
+
+
+def _anchor_has_active_bookings(supabase, anchor_id: int) -> bool:
+    result = (
+        supabase.table("booking")
+        .select("booking_id", count="exact")
+        .eq("trip_id", anchor_id)
+        .neq("status", "cancelled")
+        .limit(1)
+        .execute()
+    )
+    return bool(getattr(result, "count", 0))
+
+
+def _build_anchor_insert_row(
+    *,
+    agent_id: int,
+    legs: List[dict],
+    member_trip_ids: List[int],
+) -> dict:
+    """Aggregate member fields into the anchor row payload."""
+    total_price = sum(Decimal(str(leg["price"])) for leg in legs)
+    total_seats = min(int(leg["total_seats"]) for leg in legs)
+    available_seats = min(int(leg["available_seats"]) for leg in legs)
+    first, last = legs[0], legs[-1]
+    transport_type = first.get("transport_type") or "tour"
+    suitability = first.get("suitability") or "Solo Travelers"
+    return {
+        "agent_id": agent_id,
+        "origin_city": first["origin_city"],
+        "destination_province": last["destination_province"],
+        "destination_city": last["destination_city"],
+        "departure_time": first["departure_time"],
+        "arrival_time": last["arrival_time"],
+        "price": float(total_price),
+        "transport_type": transport_type,
+        "total_seats": total_seats,
+        "available_seats": available_seats,
+        "suitability": suitability,
+        "member_trip_ids": member_trip_ids,
+        "is_tour_package": True,
+    }
+
+
+@router.post("/bundle", response_model=TripResponse, status_code=status.HTTP_201_CREATED)
+async def create_trip_bundle(
+    payload: CreateBundleRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Create a new trip bundle (multi-leg Tour Package) anchored on a fresh
+    `trips` row. The anchor's fields are aggregated from the listed members.
+
+    See `.cursor/rules/trip-bundles-plan.mdc` for the locked design decisions.
+    """
+    supabase = get_supabase_client()
+    user_id = current_user["id"]
+    agent_id = _resolve_current_agent_id(supabase, user_id)
+
+    legs = _load_ordered_member_trips(supabase, payload.member_trip_ids)
+    _validate_bundle_chain(legs, agent_id)
+
+    insert_row = _build_anchor_insert_row(
+        agent_id=agent_id,
+        legs=legs,
+        member_trip_ids=payload.member_trip_ids,
+    )
+
+    try:
+        result = supabase.table("trips").insert(insert_row).execute()
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create bundle anchor.",
+            )
+        created = result.data[0]
+        images_map = _fetch_trip_images_map(supabase, [created["trip_id"]])
+        return _row_to_trip_response(created, images_map)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating bundle: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create bundle: {str(e)}",
+        )
+
+
+@router.patch("/bundle/{anchor_id}", response_model=TripResponse)
+async def update_trip_bundle(
+    anchor_id: int,
+    payload: UpdateBundleRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Replace the member list of an existing bundle anchor.
+    Allowed only while the anchor has no non-cancelled bookings (decision 8).
+    """
+    supabase = get_supabase_client()
+    user_id = current_user["id"]
+    agent_id = _resolve_current_agent_id(supabase, user_id)
+
+    anchor_result = supabase.table("trips").select("*").eq("trip_id", anchor_id).execute()
+    if not anchor_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bundle anchor not found.",
+        )
+    anchor = anchor_result.data[0]
+    if anchor.get("agent_id") != agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the bundle owner can edit it.",
+        )
+    if not anchor.get("member_trip_ids"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Trip is not a bundle anchor.",
+        )
+    if _anchor_has_active_bookings(supabase, anchor_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bundle has confirmed bookings and can no longer be edited.",
+        )
+    if anchor_id in payload.member_trip_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A bundle cannot include itself.",
+        )
+
+    legs = _load_ordered_member_trips(supabase, payload.member_trip_ids)
+    _validate_bundle_chain(legs, agent_id)
+
+    update_row = _build_anchor_insert_row(
+        agent_id=agent_id,
+        legs=legs,
+        member_trip_ids=payload.member_trip_ids,
+    )
+    # Drop agent_id from the update payload (immutable)
+    update_row.pop("agent_id", None)
+
+    try:
+        result = (
+            supabase.table("trips").update(update_row).eq("trip_id", anchor_id).execute()
+        )
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update bundle.",
+            )
+        updated = result.data[0]
+        images_map = _fetch_trip_images_map(supabase, [anchor_id])
+        return _row_to_trip_response(updated, images_map)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating bundle {anchor_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update bundle: {str(e)}",
+        )
+
+
+@router.get("/{trip_id}/legs", response_model=List[TripResponse])
+async def get_bundle_legs(trip_id: int):
+    """
+    Return the ordered member trips of a bundle anchor.
+    Returns an empty list for ordinary (non-bundle) trips.
+    Negative trip_id (external/partner trips) always returns an empty list.
+    """
+    if trip_id < 0:
+        return []
+
+    supabase = get_supabase_client()
+    anchor_result = (
+        supabase.table("trips")
+        .select("trip_id, member_trip_ids")
+        .eq("trip_id", trip_id)
+        .execute()
+    )
+    if not anchor_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip {trip_id} not found",
+        )
+    member_ids = anchor_result.data[0].get("member_trip_ids") or []
+    if not member_ids:
+        return []
+
+    legs = _load_ordered_member_trips(supabase, member_ids)
+    agent_ids = list({leg["agent_id"] for leg in legs})
+    agent_names: dict[int, Optional[str]] = {}
+    if agent_ids:
+        agents_result = (
+            supabase.table("travel_agent")
+            .select("agent_id, name")
+            .in_("agent_id", agent_ids)
+            .execute()
+        )
+        for row in agents_result.data or []:
+            agent_names[row["agent_id"]] = row.get("name")
+    images_map = _fetch_trip_images_map(supabase, [leg["trip_id"] for leg in legs])
+    return [
+        _row_to_trip_response(leg, images_map, agent_names.get(leg["agent_id"]))
+        for leg in legs
+    ]
 

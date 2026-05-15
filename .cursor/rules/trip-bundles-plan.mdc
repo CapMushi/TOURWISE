@@ -1,0 +1,233 @@
+---
+description: Plan for the Trip Bundles feature (multi-trip Tour Packages) in TourWise. Two phases: DB migration and application development. Use this rule when implementing bundle creation, listing, booking, or cancellation.
+globs:
+alwaysApply: false
+---
+
+# Trip Bundles Plan
+
+A "trip bundle" lets a travel agent stitch several existing `trips` rows into one multi-leg tour package that travelers see and book as a single trip. Reuses the existing `trips`, `booking`, and `payments` tables.
+
+## Locked Design Decisions
+
+| # | Topic | Decision |
+|---|---|---|
+| 1 | Membership scope | Bundle members must all belong to the bundling agent (single payout, no cross-agent revenue split for MVP). |
+| 2 | Anchor creation | Agent picks legs; backend auto-creates a new `trips` row as the anchor with aggregated fields. |
+| 3 | Member trip listings | Member trips remain independently listed; seats are shared (booking the bundle or the leg decrements the same `available_seats`). |
+| 4 | Pricing | Pure sum of member `price` values. No discount control in MVP. |
+| 5 | Shape | Minimum 2 legs. Both open walks (start ≠ end) and closed walks (start = end) allowed. |
+| 6 | Edge uniqueness | Directed — `(origin, destination)` pair must be unique across legs; `A→B` and `B→A` are distinct edges. |
+| 7 | Temporal rule | `member[i].arrival_time <= member[i+1].departure_time` (no time travel). No minimum layover enforced. |
+| 8 | Edit policy | Fully editable before any booking exists. Immutable after the first confirmed booking on the bundle. |
+| 9 | Member-edit propagation | DB trigger recomputes anchor `price`, `total_seats`, `available_seats` when any member changes. |
+| 10 | Cancellation | Cancelling a bundle booking refunds in full and increments seats on every member. No partial-leg cancellation. |
+| 11 | Member-agent notifications | Reuse `booking_notifications`. Since all legs belong to the same agent (decision 1), one combined notification per bundle booking is sufficient. |
+| 12 | Listings UX | Bundles render inline with regular trips using the existing `is_tour_package` "Tour Package" badge already wired into `TripCardFlexible`. |
+| 13 | Title | Auto-generated: `"Tour: CityA → CityB → … → CityZ"`. No new column needed. |
+| 14 | Geography | Pakistani cities only. Validate on create against the same city list already used by trip creation. |
+
+## Chain Validation Rules (enforced by the bundle create/update API)
+
+Given `legs = [trips[id] for id in member_trip_ids]`:
+
+1. `len(legs) >= 2`
+2. All legs have `agent_id == current_agent_id` (decision 1)
+3. Continuity: for every `i`, `legs[i].destination_city == legs[i+1].origin_city`
+4. Directed-edge uniqueness: `(origin_city, destination_city)` pairs are all distinct
+5. Temporal: `legs[i].arrival_time <= legs[i+1].departure_time`
+6. Seats: every leg has `available_seats > 0`
+7. None of the legs is itself a bundle anchor (no nesting)
+
+---
+
+## Phase 1 — Database Migration
+
+Single additive SQL migration. No drops, no renames. Add to `backend/supabase/` as `trip_bundles_member_ids.sql` (or extend the existing additive migration file).
+
+### 1.1 New column on `trips`
+
+```sql
+alter table public.trips
+  add column if not exists member_trip_ids bigint[] not null default '{}';
+
+create index if not exists idx_trips_member_trip_ids
+  on public.trips using gin (member_trip_ids);
+```
+
+Semantics:
+
+- Empty array = ordinary single trip (default).
+- Non-empty array = bundle anchor; ordered list of member `trip_id`s, leg 1 first.
+- The existing `is_tour_package` column should also be set `true` on bundle anchors so `TripCardFlexible` keeps its current badge logic.
+
+### 1.2 Aggregate recompute function and trigger
+
+```sql
+create or replace function public.recompute_bundle_anchor(p_anchor_id bigint)
+returns void language plpgsql as $$
+declare
+  v_ids bigint[];
+begin
+  select member_trip_ids into v_ids from public.trips where trip_id = p_anchor_id;
+  if v_ids is null or array_length(v_ids, 1) is null then
+    return;
+  end if;
+
+  update public.trips a
+  set
+    price            = (select coalesce(sum(t.price), 0)
+                        from public.trips t
+                        where t.trip_id = any(v_ids)),
+    total_seats      = (select coalesce(min(t.total_seats), 0)
+                        from public.trips t
+                        where t.trip_id = any(v_ids)),
+    available_seats  = (select coalesce(min(t.available_seats), 0)
+                        from public.trips t
+                        where t.trip_id = any(v_ids)),
+    origin_city      = (select t.origin_city
+                        from public.trips t
+                        where t.trip_id = v_ids[1]),
+    destination_city = (select t.destination_city
+                        from public.trips t
+                        where t.trip_id = v_ids[array_upper(v_ids, 1)]),
+    departure_time   = (select t.departure_time
+                        from public.trips t
+                        where t.trip_id = v_ids[1]),
+    arrival_time     = (select t.arrival_time
+                        from public.trips t
+                        where t.trip_id = v_ids[array_upper(v_ids, 1)]),
+    is_tour_package  = true
+  where a.trip_id = p_anchor_id;
+end;
+$$;
+
+create or replace function public.trg_member_trip_changed()
+returns trigger language plpgsql as $$
+declare
+  anchor_id bigint;
+begin
+  for anchor_id in
+    select trip_id from public.trips
+    where new.trip_id = any(member_trip_ids)
+  loop
+    perform public.recompute_bundle_anchor(anchor_id);
+  end loop;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_member_trip_aggregates on public.trips;
+create trigger trg_member_trip_aggregates
+after update of price, total_seats, available_seats, origin_city, destination_city,
+                departure_time, arrival_time on public.trips
+for each row execute function public.trg_member_trip_changed();
+```
+
+### 1.3 Protect member trips from deletion while bundled
+
+```sql
+create or replace function public.trg_block_member_delete()
+returns trigger language plpgsql as $$
+begin
+  if exists (
+    select 1 from public.trips
+    where old.trip_id = any(member_trip_ids)
+  ) then
+    raise exception 'Trip % is a member of an active bundle and cannot be deleted', old.trip_id;
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_member_trip_delete_guard on public.trips;
+create trigger trg_member_trip_delete_guard
+before delete on public.trips
+for each row execute function public.trg_block_member_delete();
+```
+
+### 1.4 Update schema documentation
+
+After applying the migration, update `.cursor/rules/database-schema.mdc` to list the new `trips.member_trip_ids` column and the two new triggers under the trips table section.
+
+---
+
+## Phase 2 — Application Development
+
+### 2.1 Backend (`backend/app/api/trips.py`)
+
+- Add `member_trip_ids: List[int] = []` to `TripCreate` and `TripResponse` Pydantic models.
+- New endpoint `POST /api/trips/bundle` that accepts `{ member_trip_ids: [int, ...] }` and:
+  1. Verifies all member IDs belong to the calling agent.
+  2. Loads the member rows, then runs the seven Chain Validation Rules above.
+  3. Inserts the anchor row with aggregated fields, `member_trip_ids` populated, `is_tour_package = true`, `agent_id = current_agent_id`.
+  4. Returns the new anchor in the standard `TripResponse` shape.
+- New endpoint `PATCH /api/trips/bundle/{anchor_id}` for pre-booking edits. Reject if any non-cancelled `booking` row references this anchor.
+- Extend `DELETE /api/trips/{id}` to also reject deletion of an anchor if it has any non-cancelled booking; otherwise allow.
+- New endpoint `GET /api/trips/{id}/legs` returning the ordered member rows for bundle anchors.
+
+### 2.2 Backend (`backend/app/api/bookings.py`)
+
+- In `create_booking` (~line 448), after fetching the trip:
+  - If `trip.member_trip_ids` is non-empty, treat as bundle:
+    - Fetch all member rows in one query.
+    - Validate every member has `available_seats >= number_of_seats`.
+    - In a transaction: decrement `available_seats` on every member and the anchor; insert one `booking` row pointing at the anchor; insert one `payments` row for the summed total.
+    - Insert one `booking_notifications` row for the traveler.
+    - Insert one notification for the bundling agent summarizing all legs.
+- In `cancel_booking`:
+  - If the booked trip is a bundle anchor, increment `available_seats` on every member and the anchor in one transaction. Refund logic is unchanged.
+
+### 2.3 Frontend additions
+
+- The tour-package builder lives at `frontend/src/pages/ResourceInventory.tsx` (the old
+  mock bus/hotel page was retired). It is the **only** page where bundles are created;
+  there is no separate `CreateBundle.tsx` file.
+  - Left panel: agent's own active trips (uses existing `getMyTrips`).
+  - Right panel: ordered "Stop N" cards with up/down/remove buttons.
+  - **Journey map** card at the top renders `BundleRouteMap` (see 2.4) live as stops are added.
+  - Live validator surfacing the failing rule in plain English (continuity / duplicate
+    edge / time-travel / seat shortage). On submit calls `POST /api/trips/bundle`.
+- `frontend/src/components/TripCardFlexible.tsx`:
+  - When `trip.member_trip_ids?.length >= 2`, render `"A {N}-stop guided journey"`
+    beneath the existing "Tour Package" badge.
+- `frontend/src/pages/TripDetails.tsx`:
+  - If the trip is a bundle anchor, fetch `GET /api/trips/{id}/legs`, render
+    `BundleRouteMap` with all stops, then a customer-facing accordion ("Stop N · A → B",
+    Travel by / Departs / Arrives / Travel partner). No internal trip IDs are shown.
+- `frontend/src/pages/MyBookings.tsx`:
+  - For bookings whose embedded `trip.member_trip_ids.length >= 2`, render a
+    "Tour Package · N stops" chip and an expandable itinerary panel with one row per stop.
+- `frontend/src/lib/api.ts`:
+  - `member_trip_ids?: number[]` on `TripResponse`.
+  - `createBundle(memberTripIds)`, `updateBundle(anchorId, memberTripIds)`,
+    `getBundleLegs(anchorId)` helpers.
+
+### 2.4 Routing, access, and map visualization
+
+- Agent sidebar entry **"Tour Packages"** (`/agent/resource-inventory`, Sparkles icon).
+- There is no `/agent/bundles/new` route — the same URL slot that used to host the mock
+  Resource Inventory now hosts the tour-package builder.
+- `frontend/src/components/BundleRouteMap.tsx` provides the map visualization:
+  - Built on `react-leaflet` + CARTO Voyager tiles (free, no API key).
+  - City coordinates come from `frontend/src/lib/pakistanCities.ts`.
+  - Numbered gradient pins (emerald = start, indigo = mid, amber = end) plus an animated
+    dashed flowing polyline (CSS keyframes `bundle-route-flow` in `index.css`).
+  - Renders a "Continuous journey" banner overlay when ≥ 2 stops are present.
+- The map appears in two places: the journey builder (live) and TripDetails (traveler view).
+
+### 2.5 Testing
+
+- Manual flow: create 4 PK trips for one agent → create a bundle KHI→LHE→ISB→KHI → confirm anchor row appears in traveler home with "Tour Package" badge → book the bundle → verify seats decrement on all 4 legs and one `booking` row exists → cancel → verify seats restored.
+- Add the scenarios above to `TESTING_GUIDE.md` as a new section "8) Trip Bundles".
+
+---
+
+## Out of Scope (deferred)
+
+- Cross-agent bundles and revenue split.
+- Bundle discount or free-form pricing.
+- Partial leg cancellation.
+- Bundle nesting (a bundle that contains another bundle as a leg).
+- Non-Pakistani routes.
+- A separate "Tour Packages" tab on the traveler home (bundles render mixed in for now).

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addFavorite,
+  getBundleLegs,
   getFavoriteStatus,
   getMyReviewForTrip,
   getTripById,
@@ -26,6 +27,7 @@ import { AlertCircle, Check, MapPin, Calendar, Users, Banknote, Heart, ChevronLe
 import heroImage from "@/assets/hero-tropical.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { GoogleMapFromAddress } from "@/components/maps/GoogleMapFromAddress";
+import BundleRouteMap from "@/components/BundleRouteMap";
 
 export default function TripDetails() {
   const navigate = useNavigate();
@@ -68,6 +70,15 @@ export default function TripDetails() {
     queryFn: () => getTripCollaborators(tripIdNum!),
     enabled: !!tripIdNum,
     retry: 1,
+  });
+
+  const memberTripIds = trip?.member_trip_ids ?? [];
+  const isBundleAnchor = memberTripIds.length >= 2;
+
+  const { data: bundleLegs = [] } = useQuery({
+    queryKey: ["trip-legs", tripIdNum],
+    queryFn: () => getBundleLegs(tripIdNum!),
+    enabled: !!tripIdNum && isBundleAnchor,
   });
 
   const averageTripRating = useMemo(() => {
@@ -269,6 +280,78 @@ export default function TripDetails() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Itinerary (bundle anchors only) — traveler view */}
+          {isBundleAnchor && (
+            <Card className="glass-card border-0">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2">
+                  <Star className="h-5 w-5 text-amber-500" />
+                  Your journey · {memberTripIds.length} stops
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-4 text-sm text-body-text">
+                  One booking secures your seat on every stop below — confirmed end-to-end.
+                </p>
+                <div className="mb-5">
+                  <BundleRouteMap
+                    stops={bundleLegs.map((leg) => ({
+                      origin_city: leg.origin_city,
+                      destination_city: leg.destination_city,
+                      departure_time: leg.departure_time,
+                    }))}
+                    heightClassName="h-72 sm:h-80"
+                  />
+                </div>
+                <Accordion type="single" collapsible className="space-y-2">
+                  {bundleLegs.map((leg, idx) => (
+                    <AccordionItem
+                      key={leg.trip_id}
+                      value={`stop-${leg.trip_id}`}
+                      className="rounded-lg border border-border bg-background/40 px-3"
+                    >
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex w-full flex-wrap items-center justify-between gap-2 pr-2 text-left">
+                          <div>
+                            <p className="text-sm font-semibold text-heading">
+                              Stop {idx + 1} · {leg.origin_city} → {leg.destination_city}
+                            </p>
+                            <p className="text-xs text-body-text">
+                              {format(new Date(leg.departure_time), "EEE, MMM d · h:mm a")}
+                            </p>
+                          </div>
+                          <Badge variant="outline">{formatPkr(leg.price)}</Badge>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-1.5 pb-2 text-sm text-body-text">
+                          <p>
+                            <span className="font-medium text-heading">Travel by:</span>{" "}
+                            <span className="capitalize">{leg.transport_type.replace("_", " ")}</span>
+                          </p>
+                          <p>
+                            <span className="font-medium text-heading">Departs:</span>{" "}
+                            {format(new Date(leg.departure_time), "EEE, MMM d · h:mm a")}
+                          </p>
+                          <p>
+                            <span className="font-medium text-heading">Arrives:</span>{" "}
+                            {format(new Date(leg.arrival_time), "EEE, MMM d · h:mm a")}
+                          </p>
+                          {leg.agent_name && (
+                            <p>
+                              <span className="font-medium text-heading">Travel partner:</span>{" "}
+                              {leg.agent_name}
+                            </p>
+                          )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Booking Snapshot */}
           <Card className="glass-card border-0">

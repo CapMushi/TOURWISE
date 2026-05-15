@@ -170,6 +170,73 @@ Expected:
 
 ---
 
+## 8) Trip Bundles (Tour Packages)
+
+Multi-leg tour packages built by stitching several existing `trips` rows together. See
+`.cursor/rules/trip-bundles-plan.mdc` for the full design.
+
+Prerequisites:
+
+- Phase 1 migration applied (`backend/supabase/trip_bundles_phase1.sql`).
+- At least one verified agent with 3–4 trips spanning Pakistani cities such that the
+  destination of leg `i` equals the origin of leg `i+1` (e.g. KHI→LHE, LHE→ISB, ISB→KHI).
+
+Happy path (create + book + cancel):
+
+1. Sign in as an agent. Create 4 trips: Karachi→Lahore, Lahore→Islamabad,
+   Islamabad→Swat, Swat→Karachi. Make sure each has `available_seats > 0` and that
+   `arrival_time[i] <= departure_time[i+1]`.
+2. Open the sidebar → **"Tour Packages"** (`/agent/resource-inventory`).
+3. From the left panel "Add" each trip in route order. The right panel lists stops
+   in travel order; pricing and seats update live.
+4. The **journey map** at the top of the page drops a numbered pin on every city the
+   traveler passes through and connects them with a flowing dashed trail. A
+   "Continuous journey" banner appears once you have ≥ 2 stops that chain together.
+5. The validator turns green ("Continuous journey · ready to publish") when every rule
+   passes. Click "Publish tour package".
+6. You land on the new anchor trip page. Verify:
+   - The same journey map is rendered above the itinerary.
+   - The itinerary lists each stop as "Stop N · A → B" with Travel by / Departs /
+     Arrives / Travel partner — no internal trip IDs are visible.
+   - The card on the traveler home shows the "Tour Package" badge plus "A N-stop
+     guided journey" beneath the route.
+7. As a traveler, open the anchor trip and book it for `S` seats.
+8. After booking confirms:
+   - The anchor row's `available_seats` decreased by `S`.
+   - Every member trip's `available_seats` also decreased by `S`.
+   - "My Bookings" shows a "Tour Package · N stops" chip and a "Show stops" toggle
+     that reveals the customer-facing itinerary.
+   - The agent receives one combined notification listing every stop.
+9. Cancel the booking. All member trips' seats are restored, the anchor seats are
+   restored, and the refund flow runs as normal.
+
+Validator coverage to spot-check on create:
+
+- Add the same `A→B` route twice → "Duplicate route" error.
+- Reorder so leg 2 starts in a different city than leg 1 ended → "Chain breaks" error.
+- Pick legs where leg 2 departs before leg 1 arrives → "departs before … arrives" error.
+- Pick legs from another agent (not possible via the picker; verify the backend rejects
+  with 403 if exercised directly).
+- Pick a trip that is itself a bundle anchor (`member_trip_ids` populated) → "nesting
+  is not allowed" error.
+
+DB-level guards to spot-check:
+
+- Try to `DELETE FROM trips WHERE trip_id = <member of a bundle>` in SQL Editor →
+  the `trg_member_trip_delete_guard` trigger raises an exception.
+- Update a member trip's `price`, `available_seats`, or city fields → the
+  `trg_member_trip_aggregates` trigger automatically recomputes the anchor row.
+
+Editing a bundle:
+
+- Hit `PATCH /api/trips/bundle/{anchor_id}` with a new `member_trip_ids` list while no
+  confirmed bookings exist → 200 OK, anchor aggregates refresh.
+- Repeat after a confirmed booking exists → 409 Conflict
+  ("Bundle has confirmed bookings and can no longer be edited"), per decision 8 in
+  the plan.
+
+---
+
 ## Common Failure Checks
 
 - 401/403: token missing/expired, or user not in `travel_agent` for agent routes.
