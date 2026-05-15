@@ -237,6 +237,28 @@ Editing a bundle:
 
 ---
 
+## 9) Agent Verification v2 — application + admin review
+
+Phase 1 migrations (run once in Supabase SQL Editor):
+
+- `backend/supabase/agent_verification_v2_phase1.sql` — adds `business_name`, `phone`, `cnic_number`, `submitted_at` columns + indexes on `travel_agent`.
+- `backend/supabase/storage_agent_documents_bucket.sql` — creates the private `agent-documents` bucket with owner-folder RLS policies.
+
+End-to-end test:
+
+1. Sign up as a new traveler, then visit `/agent-verification`.
+2. Fill business name, phone, CNIC (format `12345-1234567-1`), and upload CNIC front + back images (optional business license PDF/image). The Submit button stays disabled until all required fields and both CNIC sides are present.
+3. Submit. You should see the "Application Received / Pending Review" summary on the same page.
+4. Sign in as an admin user, open `/admin/manage-agents` → **Pending Requests** tab. The applicant appears with their Business, Applicant, Email, Phone, and Submitted-at columns populated; rows are sorted newest-first.
+5. Click **View** on the pending row. The detail page (`/admin/agent-profile/<id>?from=pending`) loads with contact info, identity card, document tiles (CNIC images open in a lightbox; business license opens via signed URL), and the inline **Approve / Reject** bar at the bottom.
+6. Click **Approve** → the row disappears from Pending, shows up in the Active tab, and the applicant now has access to `/agent` on their next page load. **Reject** sends the row back to the agent who will see a "previous application was rejected" banner and a form pre-loaded for resubmission.
+7. Duplicate-CNIC test: try registering a second agent with the same CNIC — the backend responds 409 "This CNIC is already registered to another applicant".
+8. Hot-link test: copy a CNIC image URL from the detail page into an incognito tab; it should expire after ~1 hour and admin-only access via the bucket policies blocks unauthenticated reads.
+
+If document tiles render "Not uploaded" for an applicant who did upload them, recheck that the `agent-documents` bucket exists with `public = false` and that the four `Owner ... agent-documents` policies are present (see verification queries at the bottom of `storage_agent_documents_bucket.sql`).
+
+---
+
 ## Common Failure Checks
 
 - 401/403: token missing/expired, or user not in `travel_agent` for agent routes.

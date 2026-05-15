@@ -1,0 +1,377 @@
+---
+description: Phased plan to add an admin "view applicant" workflow and CNIC/document uploads to the travel-agent verification flow.
+globs:
+alwaysApply: false
+---
+
+# Agent Verification v2 — Implementation Plan
+
+## Goal
+
+Today, `POST /api/register-as-agent` inserts a `travel_agent` row with null `contact_info` / `profile_details`. The admin reviews a pending applicant with nothing but **Name, Email, Date Applied** and a blind Approve/Reject pair. This plan adds:
+
+1. A real submission form for agents (business info + CNIC images + optional business license).
+2. A wired-up **View** action on each pending row that opens a detail page showing all submitted info + document previews + Approve/Reject inline.
+3. The minimum DB scaffolding to support both (typed columns + private storage bucket + indexes).
+
+Out of scope (deferred): rejection-reason resubmit loop, verified-badge propagation, suspend, in-app notifications, audit fields. Add later as v3.
+
+---
+
+## Phase 1 — Database Migration
+
+Goal: extend `travel_agent`, provision a private documents bucket, and re-document the schema. No data backfill required (all new columns are nullable).
+
+### 1.1 `travel_agent` column additions
+
+Run in Supabase SQL Editor (also save to `backend/supabase/agent_verification_v2_phase1.sql`):
+
+```sql
+alter table public.travel_agent
+  add column if not exists business_name text,
+  add column if not exists phone         text,
+  add column if not exists cnic_number   text,
+  add column if not exists submitted_at  timestamptz;
+
+-- Unique CNIC across applicants (NULLs unaffected by partial index).
+create unique index if not exists uq_travel_agent_cnic_number
+  on public.travel_agent (cnic_number)
+  where cnic_number is not null;
+
+-- Default queue query: pending agents, oldest submitted first.
+create index if not exists idx_travel_agent_status_submitted
+  on public.travel_agent (verification_status, submitted_at desc);
+```
+
+Rationale per column:
+- `business_name` — separates legal entity from owner's personal `name`.
+- `phone` — surfaced in pending list for triage; reused post-approval.
+- `cnic_number` — KYC primary key; unique to block duplicate-identity signups.
+- `submitted_at` — distinct from row's `created_at`; set the moment the form is submitted so admins can sort the queue.
+
+Document URLs (CNIC front/back, optional business license) are **not** new columns. They go inside `travel_agent.profile_details` as a `documents` object — matches the existing convention where `avatar_url` already lives in `profile_details`.
+
+Standardized JSON shape (no migration; just convention enforced in code):
+
+```json
+{
+  "bio": "...",
+  "avatar_url": "...",
+  "documents": {
+    "cnic_front_path":     "agents/<user_id>/cnic_front_<ts>.jpg",
+    "cnic_back_path":      "agents/<user_id>/cnic_back_<ts>.jpg",
+    "business_license_path": "agents/<user_id>/license_<ts>.pdf"
+  }
+}
+```
+
+Store object **paths** (not URLs), because signed URLs are minted per-request from the backend.
+
+### 1.2 Private Storage bucket: `agent-documents`
+
+Save as `backend/supabase/storage_agent_documents_bucket.sql`. Pattern matches existing `storage_trip_images_bucket.sql` but **public = false**:
+
+```sql
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'agent-documents',
+  'agent-documents',
+  false,
+  10485760,
+  array['image/jpeg','image/png','image/webp','application/pdf']::text[]
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- Owner-only upload: the path's first segment must be the auth.uid().
+drop policy if exists "Owner upload agent-documents" on storage.objects;
+create policy "Owner upload agent-documents"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'agent-documents'
+    and split_part(name, '/', 1) = auth.uid()::text
+  );
+
+-- No public SELECT. Reads only via service-role-minted signed URLs.
+drop policy if exists "Owner read agent-documents" on storage.objects;
+create policy "Owner read agent-documents"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'agent-documents'
+    and split_part(name, '/', 1) = auth.uid()::text
+  );
+
+drop policy if exists "Owner update agent-documents" on storage.objects;
+create policy "Owner update agent-documents"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'agent-documents'
+    and split_part(name, '/', 1) = auth.uid()::text
+  );
+
+drop policy if exists "Owner delete agent-documents" on storage.objects;
+create policy "Owner delete agent-documents"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'agent-documents'
+    and split_part(name, '/', 1) = auth.uid()::text
+  );
+```
+
+Convention for object paths: `agents/<user_id>/<doc_kind>_<unix_ts>.<ext>`. The `<user_id>` prefix lets the owner-only policy work via `split_part(name, '/', 1) = auth.uid()`.
+
+Admins access docs via signed URLs minted by the backend (it uses the Supabase service role and can bypass RLS to call `create_signed_url`).
+
+### 1.3 Update `.cursor/rules/database-schema.mdc`
+
+In the `travel_agent` section (currently lines 122–147), append the four new columns and add a note: "Document URLs live as paths inside `profile_details.documents`; the bucket is private `agent-documents`."
+
+### 1.4 Verification queries (paste into SQL editor after running)
+
+```sql
+-- 1. Columns exist
+select column_name, data_type, is_nullable
+from information_schema.columns
+where table_name = 'travel_agent'
+  and column_name in ('business_name','phone','cnic_number','submitted_at');
+
+-- 2. Indexes exist
+select indexname from pg_indexes
+where tablename = 'travel_agent'
+  and indexname in ('uq_travel_agent_cnic_number','idx_travel_agent_status_submitted');
+
+-- 3. Bucket exists and is private
+select id, public from storage.buckets where id = 'agent-documents';
+-- Expected: public = false
+
+-- 4. Existing agents still readable (regression check)
+select agent_id, name, verification_status from public.travel_agent limit 5;
+```
+
+### 1.5 Rollback
+
+```sql
+drop index if exists idx_travel_agent_status_submitted;
+drop index if exists uq_travel_agent_cnic_number;
+alter table public.travel_agent
+  drop column if exists submitted_at,
+  drop column if exists cnic_number,
+  drop column if exists phone,
+  drop column if exists business_name;
+-- Bucket rollback (manual): delete bucket 'agent-documents' from Supabase Storage UI.
+```
+
+---
+
+## Phase 2 — Application Code
+
+Goal: agent submits a real form (with files); admin clicks **View** on a pending row and sees everything before deciding.
+
+### 2.1 Backend — `backend/app/api/auth.py`
+
+Replace the empty-payload `register_as_agent` with a payload-accepting variant (or add a sibling endpoint and deprecate the old). Recommended: **rename to `submit_agent_application`**, keep the old route alias for backward compat.
+
+```python
+# Pseudo-shape for the request body
+class AgentApplicationRequest(BaseModel):
+    business_name: str
+    phone: str
+    cnic_number: str
+    profile_details: Optional[Dict[str, Any]] = None  # includes documents.{cnic_front_path,cnic_back_path,business_license_path}
+    bio: Optional[str] = None
+    address: Optional[str] = None
+```
+
+Behavior:
+- Upsert `travel_agent` row keyed by `user_id`.
+- Required: `business_name`, `phone`, `cnic_number`, `documents.cnic_front_path`, `documents.cnic_back_path`. Reject 422 if any missing.
+- Set `verification_status = 'pending'`, `submitted_at = now()`.
+- Write `contact_info = { phone, address, cnic_number }`, merge `profile_details` (preserve any existing `avatar_url`).
+- Return 409 if `cnic_number` collides (let DB unique index raise; map error to `HTTPException(409, "CNIC already registered to another applicant")`).
+
+### 2.2 Backend — `backend/app/api/admin.py`
+
+#### 2.2.1 New endpoint `GET /api/admin/agents/{agent_id}`
+
+Returns the full applicant view. Response model:
+
+```python
+class AdminAgentDetailResponse(BaseModel):
+    agent_id: int
+    user_id: str
+    name: str
+    business_name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    cnic_number: Optional[str]
+    verification_status: Optional[str]
+    submitted_at: Optional[str]
+    created_at: Optional[str]
+    contact_info: Optional[Dict[str, Any]]
+    profile_details: Optional[Dict[str, Any]]   # full payload incl. bio, avatar
+    documents: Dict[str, Optional[str]]          # { cnic_front_url, cnic_back_url, business_license_url } — signed, ~1h TTL
+    total_trips: int
+    rating: Optional[float]
+    numberofreviews: int
+```
+
+Implementation notes:
+- Auth: `Depends(require_admin_user)` (same as existing admin endpoints).
+- For each `profile_details.documents.<doc>_path`, call `supabase.storage.from_('agent-documents').create_signed_url(path, 3600)` and put the signed URL under `documents.<doc>_url`. Skip docs that have a null path.
+- Reuse `_get_trip_counts_by_agent` for `total_trips`.
+
+#### 2.2.2 Extend existing `_serialize_agents`
+
+Add `business_name`, `phone`, `submitted_at` to `AdminManagedAgent` and the serializer — needed so the **list** view (pending tab) can show "Business · CNIC ✓" without an extra round-trip per row.
+
+### 2.3 Frontend — `frontend/src/lib/api.ts`
+
+#### 2.3.1 New private bucket helper
+
+Mirror `uploadProfileImage` but for `agent-documents`. Crucial differences: bucket name, path prefix `agents/<user_id>/`, **does not** call `getPublicUrl` — returns the storage path.
+
+```ts
+export async function uploadAgentDocument(
+  file: File,
+  userId: string,
+  kind: "cnic_front" | "cnic_back" | "business_license",
+): Promise<string> {
+  const ext = file.name.split(".").pop();
+  const path = `${userId}/${kind}_${Date.now()}.${ext}`;
+  const { data, error } = await supabase.storage
+    .from("agent-documents")
+    .upload(path, file, { cacheControl: "3600", upsert: true });
+  if (error) throw new Error(`Failed to upload ${kind}: ${error.message}`);
+  return data.path; // store this in profile_details.documents.<kind>_path
+}
+```
+
+Note bucket name = `agent-documents`; consider `VITE_SUPABASE_AGENT_DOCS_BUCKET` env override to mirror existing convention.
+
+#### 2.3.2 New types + API calls
+
+```ts
+export interface AgentApplicationPayload {
+  business_name: string;
+  phone: string;
+  cnic_number: string;
+  bio?: string;
+  address?: string;
+  documents: {
+    cnic_front_path: string;
+    cnic_back_path: string;
+    business_license_path?: string;
+  };
+}
+
+export function submitAgentApplication(payload: AgentApplicationPayload) {
+  return apiClient("/api/register-as-agent", { method: "POST", body: payload });
+}
+
+export interface AdminAgentDetail { /* mirrors AdminAgentDetailResponse */ }
+
+export function getAdminAgentDetail(agentId: number) {
+  return apiClient<AdminAgentDetail>(`/api/admin/agents/${agentId}`, { method: "GET" });
+}
+```
+
+Also extend the existing `AdminManagedAgent` type with `business_name`, `phone`, `submitted_at`.
+
+### 2.4 Frontend — `frontend/src/pages/AgentVerification.tsx`
+
+Replace the single-button shell with a real form. Sections:
+
+1. **Business info** — `business_name` (required), `phone` (required), `address` (optional), `bio` (optional textarea).
+2. **Identity** — `cnic_number` (required, format `XXXXX-XXXXXXX-X` with client-side regex).
+3. **Documents** — three file inputs:
+   - CNIC front (required, image)
+   - CNIC back (required, image)
+   - Business license / NTN (optional, image or PDF)
+
+Submit flow:
+1. Disable submit until required fields filled.
+2. On click: upload each provided file via `uploadAgentDocument`; collect returned paths.
+3. Call `submitAgentApplication` with text fields + the three paths.
+4. On success, set `requestSubmitted` and surface "Submitted, awaiting review" state (existing pattern).
+
+Status handling:
+- If user already has `verification_status = 'pending'`, render a read-only summary of what they submitted (don't show the form again) — uses the existing `useAuth().agentVerificationStatus`.
+- Approved redirect to `/agent` stays as-is.
+
+### 2.5 Frontend — `frontend/src/pages/ManageAgents.tsx`
+
+Pending tab table changes:
+- Add a `Business` column (from new `business_name`) so admins can scan quickly.
+- Add a **View** button to each row, before Approve/Reject:
+  ```tsx
+  <Button size="sm" variant="outline" onClick={() => navigate(`/admin/agent-profile/${agent.agent_id}?from=pending`)}>
+    <Eye className="h-4 w-4 mr-1" /> View
+  </Button>
+  ```
+- Sort pending rows by `submitted_at` descending (newest first) client-side — falls back to `created_at` for legacy rows.
+
+Active tab is unchanged; it already has the name-click → detail page link.
+
+### 2.6 Frontend — `frontend/src/pages/AgentProfileDetail.tsx`
+
+**Delete the entire `agentData` mock constant** (currently lines 9–23) and rewrite the page to fetch live data:
+
+```tsx
+const { id } = useParams();
+const { data, isLoading, error } = useQuery({
+  queryKey: ["admin-agent-detail", id],
+  queryFn: () => getAdminAgentDetail(Number(id)),
+});
+```
+
+Sections to render:
+1. **Header**: avatar (from `profile_details.avatar_url`), `business_name` (large) + `name` (subtitle), verification badge (Pending = amber, Approved = green, Rejected = red).
+2. **Contact card**: email, phone, address.
+3. **Identity card**: CNIC number, submitted_at (formatted).
+4. **Documents card**: image thumbnails for `documents.cnic_front_url` and `documents.cnic_back_url`, opened in a shadcn `<Dialog>` for full-size preview. PDF (business license) rendered as a download link.
+5. **Activity card** (only if approved): `total_trips`, `rating`, `numberofreviews` — keep existing styled cards.
+6. **Decision bar** (only if `verification_status === 'pending'`, and we came from pending tab): inline Approve / Reject buttons that call `reviewAgentVerification` and navigate back to `/admin/manage-agents`.
+7. Keep the existing **Danger Zone** but only show it for approved agents (move suspend to v3; for now leave the button non-functional or hide).
+
+Remove `frontend/src/pages/AgentProfileDetail.tsx` lines 95–117 (the "Current Listings" mock) until backed by real `trips` data; or wire it to `GET /api/profile/agent/dashboard` style query if quick. Acceptable to leave as a TODO comment for v3.
+
+### 2.7 Sidebar / route changes
+
+None required — the `/admin/agent-profile/:id` route is already wired up in `App.tsx` and `AppSidebar.tsx`. Just make sure the route is reachable from the Pending tab now.
+
+### 2.8 Docs
+
+- Update `TESTING_GUIDE.md` with a "Phase 7 — Agent verification v2" section: how to register, fill the form, upload CNIC, see it appear in admin pending, click View, approve.
+- Update `.cursor/rules/database-schema.mdc` `travel_agent` block (done in 1.3, but verify after Phase 2 lands).
+
+---
+
+## Validation checklist
+
+After both phases land, verify end-to-end:
+
+- [ ] New user signs up → opens `/agent-verification` → fills all fields + uploads two images → submit succeeds.
+- [ ] Same user re-opens `/agent-verification` → sees read-only summary, not the empty form.
+- [ ] Admin opens `/admin/manage-agents` → sees the new applicant in Pending with Business + CNIC columns populated.
+- [ ] Admin clicks **View** → lands on detail page → sees all fields + clickable CNIC images.
+- [ ] Admin clicks **Approve** in the detail page → status flips → applicant disappears from Pending → moves to Active.
+- [ ] Approved agent logs in → `/agent` is reachable; their `business_name` shows up where `name` used to.
+- [ ] Second user tries to register with the same `cnic_number` → API responds 409.
+- [ ] Hot-link test: copying a CNIC image URL into an incognito browser returns 403 / expires within 1h.
+- [ ] Lint check on `frontend/src/lib/api.ts`, `frontend/src/pages/AgentVerification.tsx`, `frontend/src/pages/AgentProfileDetail.tsx`, `frontend/src/pages/ManageAgents.tsx`, `backend/app/api/admin.py`, `backend/app/api/auth.py`.
+
+---
+
+## Decision log
+
+- **JSON for docs vs. separate `agent_documents` table** → JSON. One applicant has a fixed set of doc slots; no per-doc verification state is required for v2. Migrate to a table only if v3 adds per-doc review.
+- **Public bucket vs. private bucket** → private. CNICs are PII; never expose via public URL.
+- **Path-based ownership vs. RLS by row** → path-based. The bucket policy uses `split_part(name, '/', 1) = auth.uid()::text`, mirroring Supabase's recommended owner-folder pattern. No metadata table needed.
+- **Single endpoint `POST /api/register-as-agent` vs. split** → single endpoint, payload now required. Existing callers will get 422; acceptable since the old payload was an empty body and no production traffic exists yet.
+- **Where to gate "form vs. summary" on the agent side** → use `useAuth().agentVerificationStatus`. Status `pending` or `approved` ⇒ summary; status `rejected` or `undefined` ⇒ form.

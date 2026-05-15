@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import { toast } from "sonner";
 import { getCurrentUserContextWithToken, type AppRole } from "@/lib/api";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -28,6 +30,7 @@ type AuthContextValue = {
   signInWithEmail: (email: string, password: string) => Promise<{ error?: string }>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  refreshAgentVerificationStatus: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -208,6 +211,46 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   }, []);
 
+  const refreshAgentVerificationStatus = useCallback(async () => {
+    await loadUserContext(session);
+  }, [loadUserContext, session]);
+
+  // Global suspension handler: api.ts dispatches `tourwise:account-suspended`
+  // whenever a request comes back with a 403 ACCOUNT_SUSPENDED sentinel.
+  // We sign out the current Supabase session, surface a toast, and bounce
+  // to /login. `suspendedAtRef` debounces back-to-back triggers when many
+  // queries fail simultaneously (e.g. a dashboard with parallel queries).
+  const suspendedAtRef = useRef<number>(0);
+  useEffect(() => {
+    const handleSuspension = (event: Event) => {
+      const now = Date.now();
+      if (now - suspendedAtRef.current < 2000) return;
+      suspendedAtRef.current = now;
+
+      const detail = (event as CustomEvent<{ reason?: string } | undefined>).detail;
+      console.warn("[Auth] Account suspended event received", detail);
+      toast.error("Your account has been suspended. Please contact support.", {
+        duration: 6000,
+      });
+
+      void supabase.auth.signOut().catch((err) => {
+        console.error("[Auth] signOut after suspension failed", err);
+      });
+
+      // Use a hard navigation so any in-flight queries and cached state are
+      // dropped. AuthProvider sits above the router so useNavigate is not
+      // available here.
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
+    };
+
+    window.addEventListener("tourwise:account-suspended", handleSuspension as EventListener);
+    return () => {
+      window.removeEventListener("tourwise:account-suspended", handleSuspension as EventListener);
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -222,6 +265,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       signInWithEmail,
       signInWithGoogle,
       signOut,
+      refreshAgentVerificationStatus,
     }),
     [
       user,
@@ -236,6 +280,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       signInWithEmail,
       signInWithGoogle,
       signOut,
+      refreshAgentVerificationStatus,
     ]
   );
 
